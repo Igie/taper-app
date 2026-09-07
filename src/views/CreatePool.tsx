@@ -20,16 +20,17 @@ import {
   Ladder,
   binIdForPrice,
   initializePoolIx,
+  isNativeMint,
   mintRejection,
   orderMints,
   poolPda,
+  priceScale,
   type ConfigView,
   type MintInfo
 } from "@taper/sdk";
 import { navigate } from "../App";
 import { useCluster, useToasts } from "../lib/providers";
 import { listConfigs, listWalletTokens, loadMint, type Keyed, type WalletToken } from "../lib/data";
-import { isNativeMint } from "../lib/native";
 import { presetFor } from "../lib/presets";
 import { price as fmtPrice, shortAddress } from "../lib/format";
 import { readableError, send, TxFailure } from "../lib/tx";
@@ -170,7 +171,7 @@ export function CreatePool({ onCreated }: { onCreated: () => void }) {
       ordered.infoY.decimals,
       [chosen.view.minBinId, chosen.view.maxBinId]
     );
-    const scale = 10 ** (ordered.infoX.decimals - ordered.infoY.decimals);
+    const scale = priceScale(ordered.infoX.decimals, ordered.infoY.decimals);
     const actual = ladder.price(activeId) * scale;
     const pool = poolPda(chosen.address, ordered.infoX.address, ordered.infoY.address);
 

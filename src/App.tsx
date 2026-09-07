@@ -9,11 +9,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { PROGRAM_ID } from "@taper/sdk";
+import { PROGRAM_ID, endpointLabel, explorerAccount, explorerTx } from "@taper/sdk";
 import { useCluster, useToasts } from "./lib/providers";
-import { endpointLabel, explorerAccount, explorerTx } from "./lib/cluster";
 import { readableError } from "./lib/tx";
 import { RpcPicker } from "./components/RpcPicker";
+import { Boundary } from "./components/primitives";
 import { isAdmin } from "./lib/presets";
 import { shortAddress } from "./lib/format";
 import { Pools } from "./views/Pools";
@@ -129,10 +129,14 @@ export function App() {
 
         <div className="topbar-status">
           <select
-            className="cluster-select"
+            className={`cluster-select ${cluster.live ? "live" : ""}`}
             value={cluster.id}
             onChange={(e) => setCluster(e.target.value as typeof cluster.id)}
-            title="Which chain this app is pointed at"
+            title={
+              cluster.live
+                ? "Mainnet: every transaction here spends real money"
+                : "Which chain this app is pointed at"
+            }
           >
             {clusters.map((c) => (
               <option key={c.id} value={c.id}>
@@ -166,7 +170,7 @@ export function App() {
         <div className="banner">
           <span>
             No executable at <code>{shortAddress(PROGRAM_ID.toBase58(), 6, 6)}</code> on {cluster.label}. Deploy
-            it with <code>scripts\deploy-devnet.ps1</code>, or switch clusters.
+            it with <code>scripts\deploy.ps1 -Cluster {cluster.id}</code>, or switch networks.
           </span>
         </div>
       )}
@@ -182,11 +186,15 @@ export function App() {
       )}
 
       <main className="stage">
-        {route.name === "pools" && <Pools />}
-        {route.name === "pool" && <PoolView address={route.address} onChanged={refreshBalance} />}
-        {route.name === "new" && <CreatePool onCreated={refreshBalance} />}
-        {route.name === "positions" && <Positions />}
-        {route.name === "configs" && <Configs isAdmin={isAdmin(publicKey)} onChanged={refreshBalance} />}
+        {/* Keyed on the route, so leaving a view that threw and coming back is a
+            fresh mount rather than the same error again. */}
+        <Boundary key={route.name === "pool" ? route.address.toBase58() : route.name}>
+          {route.name === "pools" && <Pools />}
+          {route.name === "pool" && <PoolView address={route.address} onChanged={refreshBalance} />}
+          {route.name === "new" && <CreatePool onCreated={refreshBalance} />}
+          {route.name === "positions" && <Positions />}
+          {route.name === "configs" && <Configs isAdmin={isAdmin(publicKey)} onChanged={refreshBalance} />}
+        </Boundary>
       </main>
 
       <section className="activity">

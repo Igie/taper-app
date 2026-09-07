@@ -19,11 +19,11 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
+import { normaliseEndpoint } from "@taper/sdk";
 import {
   CLUSTERS,
   loadCluster,
   loadEndpoints,
-  normaliseEndpoint,
   resolveCluster,
   saveCluster,
   saveEndpoints,

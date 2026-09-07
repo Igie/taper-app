@@ -11,6 +11,10 @@
  * **The compute limit is always set explicitly.** Deriving a bin price costs
  * roughly 10k CU in this program, so anything touching a wide range blows past
  * the 200k default. Every instruction in the program touches bins.
+ *
+ * Everything the program itself knows — which guard rejected a call, and what
+ * its number means — comes from `@taper/sdk`. Nothing in this file decodes the
+ * program's errors; it decides how to send, wait, and pay.
  */
 import {
   ComputeBudgetProgram,
@@ -21,6 +25,7 @@ import {
   type Signer
 } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
+import { describeError } from "@taper/sdk";
 
 export class TxFailure extends Error {
   constructor(
@@ -34,23 +39,15 @@ export class TxFailure extends Error {
 }
 
 /**
- * Anchor errors arrive as `{ InstructionError: [i, { Custom: n }] }`, which
- * tells a user nothing. The program's own log line names the guard that
- * rejected them, so prefer it whenever there is one.
+ * The sentence to put in front of a user when an instruction failed.
+ *
+ * The decoding is the SDK's `describeError`: it prefers the program's own
+ * `Error Message:` log line, falls back to the error table when only a
+ * `Custom(n)` number came through, and leaves anything that is not this
+ * program's failure alone. Kept as a named re-export rather than a call site
+ * rename because this is the app's word for it and every panel uses it.
  */
-export function readableError(error: unknown, logs: string[] = []): string {
-  const named = [...logs].reverse().find((line) => line.includes("Error Message:"));
-  if (named) return named.replace(/^.*Error Message:\s*/, "").trim();
-  const anchor = [...logs].reverse().find((line) => line.includes("AnchorError"));
-  if (anchor) return anchor.replace(/^Program log:\s*/, "").trim();
-  if (error instanceof Error) {
-    // Wallet adapters wrap the RPC failure; the useful part is usually nested.
-    const nested = (error as { logs?: string[] }).logs;
-    if (nested?.length && nested !== logs) return readableError(error, nested);
-    return error.message;
-  }
-  return String(error);
-}
+export const readableError = describeError;
 
 export type SendOptions = {
   computeUnits?: number;

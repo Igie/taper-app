@@ -9,7 +9,7 @@
 import { useMemo, useState } from "react";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { Ladder, POOL_DISABLED } from "@taper/sdk";
+import { displayPrice, Ladder, POOL_DISABLED, amountOf } from "@taper/sdk";
 import { navigate } from "../App";
 import { useCluster } from "../lib/providers";
 import { listConfigs, listPools, loadTokens, type Keyed, type TokenMeta } from "../lib/data";
@@ -53,10 +53,7 @@ export function Pools() {
     );
     const balanceOf = (i: number) => {
       const account = reserves[i];
-      // A token account's amount is a u64 at offset 64, in both token programs.
-      return account && account.data.length >= 72
-        ? new DataView(account.data.buffer, account.data.byteOffset + 64, 8).getBigUint64(0, true)
-        : 0n;
+      return account ? amountOf(account.data) : 0n;
     };
 
     return pools.map((p, i) => {
@@ -73,7 +70,7 @@ export function Pools() {
         y,
         reserveX: balanceOf(i * 2),
         reserveY: balanceOf(i * 2 + 1),
-        activePrice: lamportPrice * 10 ** (p.view.tokenXDecimals - p.view.tokenYDecimals)
+        activePrice: displayPrice(lamportPrice, p.view.tokenXDecimals, p.view.tokenYDecimals)
       };
     });
   }, [connection, cluster.endpoint]);

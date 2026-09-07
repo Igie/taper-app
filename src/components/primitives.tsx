@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { isEndpointFailure } from "../lib/cluster";
+import { Component, type ErrorInfo, type ReactNode } from "react";
+import { isEndpointFailure } from "@taper/sdk";
 
 export function Panel({
   title,
@@ -26,11 +26,97 @@ export function Panel({
   );
 }
 
-export function Metric({ label, value, tone }: { label: string; value: ReactNode; tone?: "x" | "y" | "dim" }) {
+/**
+ * A detail one hover away rather than always on screen.
+ *
+ * The panels here have more to say than a reader wants at once — which rent a
+ * plan pays, why a band needs both sides, what a move keeps. Saying all of it
+ * inline turned every panel into an essay, so the rule is: **what changes the
+ * next click stays visible, what explains it moves in here.** Focusable as
+ * well as hoverable, so the explanation is reachable without a mouse.
+ */
+export function HoverCard({
+  trigger,
+  children,
+  className
+}: {
+  trigger: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span className={`hovercard ${className ?? ""}`} tabIndex={0}>
+      {trigger}
+      <span className="tip" role="tooltip">
+        {children}
+      </span>
+    </span>
+  );
+}
+
+/** The `i` badge: `HoverCard` with the smallest possible trigger. */
+export function Info({ children }: { children: ReactNode }) {
+  return (
+    <HoverCard className="info" trigger={<i aria-hidden="true">i</i>}>
+      {children}
+    </HoverCard>
+  );
+}
+
+export function Metric({
+  label,
+  value,
+  tone,
+  hint
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: "x" | "y" | "dim";
+  hint?: ReactNode;
+}) {
   return (
     <div className={`metric ${tone ?? ""}`}>
-      <span>{label}</span>
+      <span>
+        {label}
+        {hint && <Info>{hint}</Info>}
+      </span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+/**
+ * A tab strip.
+ *
+ * Distinct from `Segmented` on purpose: segmented control picks a *value* the
+ * form below will use, a tab picks *which form* is below. They looked the same
+ * once and the panel read as two rows of the same question.
+ */
+export function Tabs<T extends string>({
+  value,
+  tabs,
+  onChange
+}: {
+  value: T;
+  tabs: { id: T; label: string; hint?: string; disabled?: boolean }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="tab-strip" role="tablist">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={tab.id === value}
+          title={tab.hint}
+          disabled={tab.disabled}
+          className={tab.id === value ? "selected" : ""}
+          onClick={() => onChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -151,4 +237,46 @@ export function LoadError({ error }: { error: string }) {
       )}
     </>
   );
+}
+
+/**
+ * The last line between a bug and a blank page.
+ *
+ * An error thrown while rendering unmounts the whole tree, and this app is one
+ * tree — so a mistake in a panel takes the header, the network picker and the
+ * activity log with it, leaving nothing on screen to say what happened or to
+ * click to get out. Wrapping the routed view keeps the shell alive and puts the
+ * message where it can be read, which is the difference between a bug report
+ * and "it went black".
+ *
+ * Reset is by remount: give it a `key` that changes with the route.
+ */
+export class Boundary extends Component<{ children: ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {};
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Taper: render failed", error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <Panel title="This view stopped">
+        <p className="error">{this.state.error.message}</p>
+        <p className="hint">
+          A bug in the interface, not a transaction — anything already signed is on chain and
+          unaffected. The browser console has the stack.
+        </p>
+        <p>
+          <button type="button" onClick={() => this.setState({ error: undefined })}>
+            Try again
+          </button>
+        </p>
+      </Panel>
+    );
+  }
 }

@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
   buildConfig,
+  explorerAccount,
   halfLifeForTaper,
   initializeConfigIx,
   Ladder,
@@ -26,7 +27,6 @@ import {
   type UpdateConfigParams
 } from "@taper/sdk";
 import { useCluster, useToasts } from "../lib/providers";
-import { explorerAccount } from "../lib/cluster";
 import { listConfigs, type Keyed } from "../lib/data";
 import { ADMIN_AUTHORITY, PRESETS, presetFor, presetParams } from "../lib/presets";
 import { price as fmtPrice, shortAddress } from "../lib/format";
@@ -375,7 +375,7 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
         />
       </div>
 
-      <label className="field">
+      <div className="field">
         <span>Taper</span>
         <Segmented
           value={uniform}
@@ -385,7 +385,7 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
             { id: 1, label: "Uniform (τ = 1)", hint: "A constant bin step: exactly DLMM's ladder, and no price ceiling." }
           ]}
         />
-      </label>
+      </div>
 
       {!uniform && (
         <div className="form-grid">

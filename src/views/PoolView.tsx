@@ -12,8 +12,11 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import {
   BINS_PER_ARRAY,
+  explorerAccount,
+  isEndpointFailure,
   Ladder as LadderMath,
   POOL_DISABLED,
+  priceScale,
   summarise,
   tokenPairOf,
   type BinView,
@@ -22,7 +25,6 @@ import {
   type PositionView
 } from "@taper/sdk";
 import { useCluster, useToasts } from "../lib/providers";
-import { explorerAccount, isEndpointFailure } from "../lib/cluster";
 import {
   listPositions,
   loadBins,
@@ -36,11 +38,11 @@ import {
 import { presetFor } from "../lib/presets";
 import { amount, price as fmtPrice, shortAddress } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
-import { Empty, LoadError, Metric, Panel } from "../components/primitives";
+import { HoverCard, LoadError, Metric, Panel } from "../components/primitives";
 import { Ladder } from "../components/Ladder";
 import { SwapPanel } from "./SwapPanel";
-import { LiquidityPanel } from "./LiquidityPanel";
-import { PositionPanel } from "./PositionPanel";
+import { NewPosition } from "./NewPosition";
+import { ManagePosition } from "./ManagePosition";
 
 /** Bins either side of the active one to read in a single pass. */
 const WINDOW = BINS_PER_ARRAY * 3;
@@ -99,7 +101,7 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
       cells,
       positions,
       ladder: new LadderMath(config.baseWidthQ64, config.taperQ64),
-      scale: 10 ** (pool.tokenXDecimals - pool.tokenYDecimals)
+      scale: priceScale(pool.tokenXDecimals, pool.tokenYDecimals)
     };
   }, [connection, key, owner, centre, cluster.endpoint]);
 
@@ -163,7 +165,26 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
         aside={
           <div className="panel-actions">
             {disabled && <span className="tag bad">disabled — withdrawals only</span>}
-            <span className="tag">{preset?.name ?? `config #${data.config.index}`}</span>
+            <HoverCard
+              className="chip-card"
+              trigger={<span className="tag">{preset?.name ?? `config #${data.config.index}`}</span>}
+            >
+              <dl>
+                <dt>volatility</dt>
+                <dd>{data.pool.volatilityAccumulator.toLocaleString()}</dd>
+                <dt>protocol fees</dt>
+                <dd>
+                  {amount(data.pool.protocolFeeX, data.pool.tokenXDecimals, 3)} /{" "}
+                  {amount(data.pool.protocolFeeY, data.pool.tokenYDecimals, 3)}
+                </dd>
+                <dt>usable bins</dt>
+                <dd>
+                  {data.config.minBinId} … {data.config.maxBinId}
+                </dd>
+                <dt>config</dt>
+                <dd>{shortAddress(data.configAddress.toBase58(), 4, 4)}</dd>
+              </dl>
+            </HoverCard>
             <a
               className="ghost"
               href={explorerAccount(cluster, data.address.toBase58())}
@@ -180,25 +201,19 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
       >
         <div className="metrics">
           <Metric label="price" value={<span className="mono">{fmtPrice(activePrice)}</span>} />
-          <Metric label="active bin" value={<span className="mono">{data.pool.activeId}</span>} />
+          <Metric
+            label="active bin"
+            value={<span className="mono">{data.pool.activeId}</span>}
+            hint="The bin the pool is trading in. Bins below it hold only Y, bins above it only X."
+          />
           <Metric
             label="bin width here"
-            value={<span className="mono">{(data.ladder.stepBpX100(data.pool.activeId) / 100).toFixed(2)} bps</span>}
-          />
-          <Metric
-            label="volatility"
-            value={<span className="mono">{data.pool.volatilityAccumulator.toLocaleString()}</span>}
-            tone="dim"
-          />
-          <Metric
-            label={`protocol fees`}
             value={
               <span className="mono">
-                {amount(data.pool.protocolFeeX, data.pool.tokenXDecimals, 3)} /{" "}
-                {amount(data.pool.protocolFeeY, data.pool.tokenYDecimals, 3)}
+                {(data.ladder.stepBpX100(data.pool.activeId) / 100).toFixed(2)} bps
               </span>
             }
-            tone="dim"
+            hint="This ladder's step is not constant: bins widen with price, so the width shown is the one at the active bin."
           />
         </div>
 
@@ -231,7 +246,7 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
 
       <div className="pool-columns">
         <SwapPanel bundle={data} tokens={tokens} onDone={afterTx} push={push} />
-        <LiquidityPanel
+        <NewPosition
           bundle={data}
           tokens={tokens}
           range={range}
@@ -241,19 +256,16 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
         />
       </div>
 
-      <PositionPanel
+      <ManagePosition
         bundle={data}
         tokens={tokens}
         bins={bins}
         selected={selectedPosition}
         onSelect={setSelectedPosition}
+        range={range}
         onDone={afterTx}
         push={push}
       />
-
-      {data.positions.length === 0 && publicKey && (
-        <Empty>You hold no position in this pool yet. Drag across the ladder to pick a range.</Empty>
-      )}
     </div>
   );
 }

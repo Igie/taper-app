@@ -9,6 +9,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "configs:init": "bun run scripts/init-configs.ts",
     "sol:e2e": "bun run scripts/sol-e2e.ts",
+    "wide:e2e": "bun run scripts/wide-e2e.ts",
+    "matrix:e2e": "bun run scripts/matrix-e2e.ts",
     "roundtrip": "bun run scripts/roundtrip.ts"
   },
   "dependencies": {

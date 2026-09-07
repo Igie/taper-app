@@ -3,7 +3,7 @@
  *
  * `ui/scripts/e2e.ts` drives the console's client code; this drives the app's,
  * and only the part of it that has no equivalent there: SOL is not a token, so
- * every pair that contains it goes through `src/lib/native.ts` — wrapped
+ * every pair that contains it goes through the SDK's `native.ts` — wrapped
  * before the program sees it, unwrapped after. Nothing about that is visible
  * on chain, which is exactly why it needs a test: a missing `sync_native` or a
  * close in the wrong place fails as "insufficient funds" three instructions
@@ -38,7 +38,9 @@ import {
 import {
   ACCOUNT_LEN,
   addLiquidityIx,
+  amountOf,
   arrayIndexesFor,
+  ataFor,
   binArrayPda,
   claimFeeIx,
   closePositionIx,
@@ -52,18 +54,19 @@ import {
   parsePool,
   parsePosition,
   poolPda,
-  positionPda,
+  prepareTokens,
   reductionsFor,
   removeLiquidityIx,
   reservePda,
+  SOL_RESERVE,
+  spendable,
   swapArrayIndexes,
   swapIx,
   type TokenPair
 } from "@taper/sdk";
 import { presetParams, PRESETS } from "../src/lib/preset-defs";
-import { amountOf, ataFor, loadBalances } from "../src/lib/accounts";
+import { loadBalances } from "../src/lib/accounts";
 import { listWalletTokens } from "../src/lib/data";
-import { prepareTokens, spendable, SOL_RESERVE } from "../src/lib/native";
 
 const arg = (name: string, fallback: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -214,7 +217,10 @@ const depositSol = 500_000_000n; // 0.5
 const depositToken = 500_000_000n;
 const rawX = solIsX ? depositSol : depositToken;
 const rawY = solIsX ? depositToken : depositSol;
-const position = positionPda(pool, wallet.publicKey, lower, width);
+// A position is a keypair account, so the script generates one rather than
+// deriving an address it could look up.
+const positionKey = Keypair.generate();
+const position = positionKey.publicKey;
 const arrays = arrayIndexesFor(lower, upper);
 
 const before = await loadBalances(
@@ -246,7 +252,7 @@ const lamportsBeforeDeposit = await lamportsOf(wallet.publicKey);
 await send([
   ...wrap.before,
   ...arrays.map((index) => initializeBinArrayIx(wallet.publicKey, pool, config, index)),
-  initializePositionIx(wallet.publicKey, pool, config, lower, width),
+  initializePositionIx(wallet.publicKey, pool, config, position, lower, width),
   addLiquidityIx(
     {
       owner: wallet.publicKey,
@@ -265,7 +271,7 @@ await send([
     distribute(lower, upper, 0, "spot")
   ),
   ...wrap.after
-]);
+], [positionKey]);
 
 const reserveAfterDeposit = (await tokenAmount(reserveSol)) ?? 0n;
 check("the pool's SOL reserve was funded", reserveAfterDeposit > 0n, sol(reserveAfterDeposit));

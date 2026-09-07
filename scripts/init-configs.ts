@@ -3,10 +3,18 @@
  *
  * A pool is always opened against a config, so until at least one exists the
  * program is deployed but unusable. This is the step between
- * `scripts\deploy-devnet.ps1` and anyone being able to create a pool.
+ * `scripts\deploy.ps1` and anyone being able to create a pool.
  *
  *   bun run --cwd app configs:init
- *   bun run --cwd app configs:init -- --url http://127.0.0.1:8899
+ *   bun run --cwd app configs:init -- --network localnet
+ *   bun run --cwd app configs:init -- --network mainnet-beta --yes
+ *   bun run --cwd app configs:init -- --url https://my-endpoint
+ *
+ * `--network` picks the endpoint from the SDK's own table so this script and
+ * the app cannot disagree about where devnet is; `--url` overrides it. On a
+ * live network the run stops unless `--yes` is passed, because the authority
+ * this creates is not something to discover you set by accident: it collects
+ * the protocol fee from every pool built on these presets, forever.
  *
  * The signer becomes each config's authority, which means it collects the
  * protocol share of fees in every pool built on them and can disable those
@@ -25,7 +33,7 @@ import {
   PublicKey,
   Transaction
 } from "@solana/web3.js";
-import { Ladder, configPda, initializeConfigIx, parseConfig } from "@taper/sdk";
+import { Ladder, configPda, initializeConfigIx, networkFor, parseConfig } from "@taper/sdk";
 import { PRESETS, presetParams } from "../src/lib/preset-defs";
 
 function arg(name: string, fallback: string) {
@@ -33,9 +41,22 @@ function arg(name: string, fallback: string) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const url = arg("url", "https://api.devnet.solana.com");
+const network = networkFor(arg("network", "devnet"));
+if (!network) {
+  console.error(`Unknown --network. Use mainnet-beta, devnet or localnet.`);
+  process.exit(1);
+}
+const url = arg("url", network.defaultEndpoint);
 const keypairPath = arg("keypair", join(homedir(), ".config", "solana", "id.json"));
 const dryRun = process.argv.includes("--dry-run");
+
+if (network.live && !dryRun && !process.argv.includes("--yes")) {
+  console.error(
+    `${network.label} is live. Re-run with --yes once you are sure this keypair is the authority ` +
+      `you intend to keep — it collects the protocol fee from every pool built on these presets.`
+  );
+  process.exit(1);
+}
 
 let authority: Keypair;
 try {
@@ -48,7 +69,8 @@ try {
 }
 
 const connection = new Connection(url, "confirmed");
-console.log(`cluster    ${url}`);
+console.log(`network    ${network.label}`);
+console.log(`endpoint   ${url}`);
 console.log(`authority  ${authority.publicKey.toBase58()}`);
 
 const balance = await connection.getBalance(authority.publicKey);

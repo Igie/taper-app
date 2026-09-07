@@ -12,20 +12,24 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
   amountAfterTransferFee,
   binArrayPda,
+  involvesSol,
   minOutFor,
+  prepareTokens,
   quoteSwap,
+  SOL_RESERVE,
+  spendable,
   swapArrayIndexes,
   swapIx,
   type BinView,
+  type TokenAccountState,
   type TokenPair
 } from "@taper/sdk";
 import type { PoolBundle } from "./PoolView";
 import type { Toast } from "../lib/providers";
-import { loadBalances, type TokenAccountState } from "../lib/accounts";
-import { involvesSol, prepareTokens, spendable, SOL_RESERVE } from "../lib/native";
+import { loadBalances } from "../lib/accounts";
 import { amount as fmtAmount, exact, price as fmtPrice, toRaw } from "../lib/format";
 import { send, TxFailure } from "../lib/tx";
-import { Panel, Segmented } from "../components/primitives";
+import { Info, Panel, Segmented } from "../components/primitives";
 
 export function SwapPanel({
   bundle,
@@ -211,7 +215,7 @@ export function SwapPanel({
         onChange={(id) => setSwapForY(id === "xy")}
       />
 
-      <label className="field wide">
+      <label className="field wide" htmlFor="swap-pay">
         <span>
           You pay ({inToken.symbol})
           {inBalance !== undefined && (
@@ -225,6 +229,7 @@ export function SwapPanel({
           )}
         </span>
         <input
+          id="swap-pay"
           className="mono"
           inputMode="decimal"
           placeholder="0.0"
@@ -233,7 +238,12 @@ export function SwapPanel({
         />
       </label>
 
-      <label className="field wide">
+      {/*
+        A div, not a label: <button> is labelable, so a wrapping <label> adopts
+        the first chip as its control and browsers forward the label's hover
+        and caption clicks to it — 0.1% lit up wherever the cursor went.
+      */}
+      <div className="field wide">
         <span>Slippage tolerance</span>
         <div className="segmented inline">
           {[10, 50, 100, 500].map((bps) => (
@@ -247,7 +257,7 @@ export function SwapPanel({
             </button>
           ))}
         </div>
-      </label>
+      </div>
 
       {noLiquidity && (
         <p className="hint warn">
@@ -272,7 +282,13 @@ export function SwapPanel({
           <dd className="mono">{fmtAmount(quote.minOut, outDecimals)}</dd>
           <dt>execution price</dt>
           <dd className="mono">{fmtPrice(quote.result.executionPrice * bundle.scale)}</dd>
-          <dt>fee</dt>
+          <dt>
+            fee
+            <Info>
+              The rate is the bin's own, not the pool's: a base rate that widens with the bin and a
+              variable part that rises with volatility. A walk across several bins pays each one's.
+            </Info>
+          </dt>
           <dd className="mono">{(quote.result.effectiveFeeRate * 100).toFixed(4)}%</dd>
           <dt>bins crossed</dt>
           <dd className="mono">
@@ -283,9 +299,12 @@ export function SwapPanel({
 
       {quote?.result.partial && (
         <p className="hint warn">
-          Only {fmtAmount(quote.result.amountIn, inDecimals)} of {fmtAmount(quote.budget, inDecimals)} can be
-          filled — the ladder runs out of liquidity, or out of the bin arrays this transaction carries. The
-          program fills partially rather than over-consuming, so the rest simply stays in your wallet.
+          Only {fmtAmount(quote.result.amountIn, inDecimals)} of{" "}
+          {fmtAmount(quote.budget, inDecimals)} can be filled; the rest stays in your wallet.
+          <Info>
+            The ladder runs out of liquidity, or out of the bin arrays this transaction carries. The
+            program fills partially rather than over-consuming.
+          </Info>
         </p>
       )}
 
@@ -293,18 +312,20 @@ export function SwapPanel({
         <p className="hint warn">That is more {inToken.symbol} than you hold.</p>
       )}
 
-      {involvesSol(tokens.mintX, tokens.mintY) && (
-        <p className="hint">
-          A pool holds wrapped SOL, so this transaction wraps what it needs and closes the wrapped account
-          afterwards — you pay in SOL and are paid in SOL. Any wrapped SOL already sitting in your wallet is
-          unwrapped along with it.
-        </p>
-      )}
-
       <div className="actions">
         <button type="button" className="primary" disabled={blocked || busy} onClick={doSwap}>
           {busy ? "swapping…" : "Swap"}
         </button>
+        {involvesSol(tokens.mintX, tokens.mintY) && (
+          <span className="hint">
+            paid in SOL
+            <Info>
+              A pool holds wrapped SOL, so this transaction wraps what it needs and closes the wrapped
+              account afterwards — you pay in SOL and are paid in SOL. Any wrapped SOL already sitting
+              in your wallet is unwrapped along with it.
+            </Info>
+          </span>
+        )}
         {!owner && <span className="hint">Connect a wallet to trade.</span>}
         {bundle.pool.status !== 0 && <span className="hint warn">This pool is disabled.</span>}
       </div>

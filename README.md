@@ -37,9 +37,13 @@ app still works — it simply calls every preset third-party, which is honest.
 ## Deploying to a fresh cluster
 
 ```powershell
-.\scripts\deploy-devnet.ps1                    # the program
+.\scripts\deploy.ps1 -Cluster devnet           # the program
 bun run --cwd app configs:init                 # the ladder presets
 ```
+
+Mainnet is the same two commands with `-Cluster mainnet-beta` and
+`configs:init -- --network mainnet-beta --yes`; the program has the same
+address on every cluster. `docs/mainnet-checklist.md` is the go-live list.
 
 The second step is not optional. A pool is opened *against a config*, so until
 one exists the program is deployed but nothing can be created. `configs:init`
@@ -64,7 +68,7 @@ real swap to the lamport.
 
 **SOL is not a token, so the app wraps it.** A pool holds token accounts, so a
 SOL pair is really a wrapped-SOL pair: `So111…112`, an ordinary SPL mint as far
-as the program is concerned. `lib/native.ts` treats the wrapped account as
+as the program is concerned. The SDK's `native.ts` treats the wrapped account as
 scratch space — created and funded at the top of a transaction, closed at the
 bottom of it — so you pay in SOL, are paid in SOL, and are never left holding a
 wSOL balance to clean up. The cost of that rule is that a wSOL balance you were
@@ -114,6 +118,20 @@ suggests changing endpoints. The header does the same for the program check —
 an RPC that does not answer used to read as *program not found*, which sends
 you off to redeploy a program that is already there.
 
+**The pool page splits by verb, and the reasoning is one hover away.** Swap and
+**New position** sit side by side, and **Manage position** is everything you can
+do to an account that already exists — pick one of your positions, then add,
+remove or move its band behind tabs, with *claim* and *close* in the panel
+header where either tab can reach them. They are in the header rather than in a
+tab because `close_position` refuses a position with a fee still pending, so the
+two belong together and near.
+
+The rule for text is that **what changes the next click stays on screen and what
+explains it moves into a `HoverCard`**: the numbers that decide whether to sign —
+bins funded, transactions, rent, and any warning that is actually actionable —
+are visible, and the paragraph explaining *why* a bin array costs 6,792 bytes or
+what a composition fee is lives behind the `i`. Nothing was deleted; it moved.
+
 **Presets are shown, not gated.** Every config on chain is listed whoever
 published it, because hiding third-party ones would not stop pools being built
 on them — it would only stop you recognising one. Creating a config is offered
@@ -124,18 +142,91 @@ only to `VITE_TAPER_ADMIN`, but that is this app's policy: on chain,
 
 ```
 src/
-  lib/cluster.ts    which chain, through which endpoint, and explorer links
+  lib/cluster.ts    localStorage + VITE_* over the SDK's network table
   lib/providers.tsx cluster + wallet + toast context
-  lib/tx.ts         send, poll to confirm, make program errors readable
+  lib/tx.ts         send, poll to confirm, price the priority fee
   lib/data.ts       every chain read
-  lib/accounts.ts   the trader's ATAs, created on demand
-  lib/native.ts     wrapping and unwrapping SOL around a transaction
+  lib/accounts.ts   fetching the trader's token balances
+  lib/batch.ts      signs a multi-transaction plan in order, resumably
   lib/presets.ts    this deployment's presets and its admin gate
   views/            pools, pool detail, create, positions, presets
+  views/NewPosition.tsx     opening one: a band, a shape, two amounts
+  views/ManagePosition.tsx  add / remove / move, with claim and close beside them
+  components/DepositForm.tsx  the deposit itself, shared by both of those
   components/       the ladder chart, the RPC and token pickers, form primitives
 scripts/init-configs.ts   publishes the presets
 scripts/sol-e2e.ts        the SOL lifecycle, against a running localnet
 ```
+
+## Bands wider than one transaction
+
+A position may span up to 1,400 bins, but it is created holding at most 70 and
+a deposit carries about 70, so a wide band is always several transactions. Two
+different limits produce them: `resize_position` grows the account (the runtime
+caps growth at 10,240 bytes a transaction), and `add_liquidity` fills it (the
+packet caps the bps table). `@taper/sdk`'s `planDeposit` emits both — open,
+grow, then fill — taking the shape over the *whole* band and then slicing it,
+so a split deposit lays down the same curve an undivided one would.
+`lib/batch.ts` signs the pieces one at a time, passing `Step.signers` along
+with the wallet: a position is a keypair account, so the opening transaction is
+signed by the new position as well as its owner.
+
+Growth steps are marked `idempotent`, because `resize_position` takes a target
+band rather than a delta: a step whose confirmation timed out is simply
+re-sent, where an ambiguous deposit has to stop and ask.
+
+The same instruction narrows and slides a band, which is how a range is changed
+without closing the position. **Move band** on a position does exactly that:
+`planRebalance` withdraws and claims over the bins that are leaving (the
+program refuses to drop a bin still holding shares or an unclaimed fee), then
+resizes. The bins the old and new bands share are never touched — their
+liquidity stays in the pool and keeps earning, and the position keeps its
+address, its fee checkpoints and its claimed totals. Filling the bins the move
+adds is an ordinary deposit afterwards.
+
+Note what a runner owes each step: `Step.signers` (an opening step is signed by
+the new position too) and `CU_HEADROOM_NATIVE` on top of `step.computeUnits`
+whenever it wraps token handling around one, since the whole transaction shares
+a single compute limit.
+
+The chunk width is measured rather than assumed. A packet is 1,232 bytes and a
+70-bin deposit spends 280 on its bps table and 513 on its sixteen accounts, so
+what this app wraps around a step — the compute-budget pair, and the SOL
+wrapping when a side is native — decides whether the full width still fits.
+`widthThatFits` takes that headroom and returns what is left; today it is the
+whole 70, with 63 bytes spare in the worst case, and if a client ever needs more
+room it narrows its own positions instead of failing to send.
+
+The same applies in reverse: `planExit` empties, claims and closes each position
+in its own transaction, and the **Remove** tab offers it over one position or
+over every position in the pool.
+
+**Rebalancing in the app is the move, not a round trip.** `resize_position`
+slides a band in place, so the interface offers that and nothing else: the bins
+the two bands share never leave the reserve. The older sequence — exit
+everything, measure what came back, redeposit the *delta* rather than the
+balance so it never sweeps tokens held for something else — is still an SDK
+capability, and `wide:e2e` and `matrix:e2e` still drive it; it is simply not a
+button any more, because a move keeps the account, the checkpoints and the
+claimed totals that a round trip throws away.
+
+    bun run --cwd app wide:e2e
+
+drives all of it against a running localnet: a 160-bin band opened as three
+positions, every funded bin checked against the plan to the raw unit, a re-run
+that correctly sends nothing, and a rebalance into a different band.
+
+    bun run --cwd app matrix:e2e
+
+runs the same lifecycle — open, add to the *existing* positions, swap, claim
+across them, withdraw half, rebalance, close — over every kind of pair: SPL/SPL,
+SPL and Token-2022 with a transfer fee, two fee mints, SOL/SPL, and SOL against
+a fee mint. Those variables interact and the other scripts each hold one still:
+the transfer fee is quoted per bin, so a deposit split across three positions
+quotes it three times, and a wrapped SOL account is opened and closed once per
+transaction, so a plan of three is three wraps rather than one. Every step runs
+at the compute limit the planner predicted, which is how a Token-2022 transfer
+costing more than an SPL one would show up.
 
 ## Checking the SOL path
 

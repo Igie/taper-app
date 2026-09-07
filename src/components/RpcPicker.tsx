@@ -12,7 +12,7 @@
  * another `VITE_` variable baked into the bundle everyone downloads.
  */
 import { useEffect, useRef, useState } from "react";
-import { endpointLabel } from "../lib/cluster";
+import { endpointLabel } from "@taper/sdk";
 import { useCluster } from "../lib/providers";
 
 export function RpcPicker() {

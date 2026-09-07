@@ -435,8 +435,18 @@ button.link {
   min-height: 26px;
 }
 
-.segmented button.selected {
+/* The generic button:hover is brighter than --surface-2, so left to itself it
+   paints a hovered segment more strongly than the selected one, and the choice
+   appears to follow the cursor. Hover is only a hint here; the ring answers. */
+.segmented button:not(.selected):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.segmented button.selected,
+.segmented button.selected:hover:not(:disabled) {
   background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text);
 }
 
@@ -730,44 +740,6 @@ button.link {
   color: #ecca8a;
 }
 
-.position-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.position {
-  align-items: baseline;
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  gap: 10px;
-  justify-content: flex-start;
-  min-height: 32px;
-  width: 100%;
-}
-
-.position.selected {
-  border-color: rgba(124, 140, 248, 0.45);
-  background: rgba(124, 140, 248, 0.1);
-}
-
-.position strong {
-  font-family: var(--mono);
-  font-weight: 500;
-}
-
-.position small {
-  font-size: 10.5px;
-}
-
-.position .live {
-  color: var(--good);
-}
-
-.position .idle {
-  color: var(--text-faint);
-}
-
 /* -------------------------------------------------------------- bin table */
 
 .bin-table {
@@ -973,6 +945,15 @@ button.link {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-2);
+}
+
+/* Mainnet, where a mis-click spends real money. The cue is deliberately in
+   the control you would have to use to get there, rather than a banner that
+   is dismissed once and never seen again. */
+.cluster-select.live {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: rgba(226, 176, 74, 0.1);
 }
 
 /* The wallet adapter ships its own button; align it with everything else. */
@@ -1376,27 +1357,6 @@ button.rpc-chip .tag {
   color: var(--warn);
 }
 
-/* ----------------------------------------------------------- positions */
-
-.position {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.position-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
 .activity li button.ghost {
   padding: 2px 8px;
   font-size: 11px;
@@ -1446,4 +1406,252 @@ button.rpc-chip .tag {
   border-top: 1px solid var(--line);
   margin-top: 12px;
   padding-top: 12px;
+}
+
+/* --------------------------------------------------------------- batches
+
+   A plan that spans several transactions has to show its progress, because a
+   run that stops halfway leaves positions open on chain and the user's next
+   move depends on knowing which. Rows keep their state after the run ends —
+   a finished list is the receipt, not clutter to clear away. */
+
+.batch {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  margin-top: 10px;
+  padding: 8px 10px;
+}
+
+.batch-head {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.batch-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.batch-step {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  gap: 8px;
+}
+
+.batch-mark {
+  color: var(--text-faint);
+  width: 1em;
+}
+
+.batch-step.done .batch-mark {
+  color: var(--good);
+}
+
+.batch-step.skipped .batch-mark,
+.batch-step.running .batch-mark {
+  color: var(--accent);
+}
+
+.batch-step.failed .batch-mark {
+  color: var(--bad);
+}
+
+.batch-step.unknown .batch-mark {
+  color: var(--warn);
+}
+
+.batch-step.pending .batch-label {
+  color: var(--text-faint);
+}
+
+.batch-step small {
+  flex-basis: 100%;
+  padding-left: calc(1em + 8px);
+}
+
+/* ------------------------------------------------------------ hover cards
+ *
+ * The panels have more to say than a reader wants at once. The rule is that
+ * what changes the next click stays on screen and what explains it moves in
+ * here, so every one of these is reachable but none of them is in the way.
+ *
+ * Focusable as well as hoverable — `:focus-within` rather than `:focus`, so a
+ * card wrapped around a button still opens when the button takes focus. */
+
+.hovercard {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  vertical-align: middle;
+}
+
+.hovercard > .tip {
+  background: #0d1119;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  color: var(--text-dim);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  left: 0;
+  letter-spacing: 0;
+  line-height: 1.55;
+  opacity: 0;
+  padding: 9px 11px;
+  pointer-events: none;
+  position: absolute;
+  text-align: left;
+  text-transform: none;
+  top: calc(100% + 6px);
+  transition: opacity 90ms ease;
+  visibility: hidden;
+  width: max-content;
+  max-width: 300px;
+  z-index: 30;
+}
+
+.hovercard:hover > .tip,
+.hovercard:focus-within > .tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Anchored to the right edge instead: these sit in a panel header, where a
+   left-anchored card would hang off the page. */
+.hovercard.chip-card > .tip,
+.panel > header .hovercard > .tip {
+  left: auto;
+  right: 0;
+}
+
+.hovercard .tip dl {
+  display: grid;
+  gap: 3px 12px;
+  grid-template-columns: auto 1fr;
+  margin: 0;
+}
+
+.hovercard .tip dt {
+  color: var(--text-faint);
+}
+
+.hovercard .tip dd {
+  color: var(--text);
+  font-family: var(--mono);
+  margin: 0;
+  text-align: right;
+}
+
+.info {
+  cursor: help;
+  margin-left: 5px;
+}
+
+.info > i {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--text-faint);
+  display: inline-flex;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-style: normal;
+  height: 12px;
+  justify-content: center;
+  line-height: 1;
+  width: 12px;
+}
+
+.info:hover > i,
+.info:focus-within > i {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ tabs
+ *
+ * A tab picks which form is below; a segmented control picks a value that
+ * form will use. They looked alike once and the panel read as two rows of the
+ * same question, so this one is an underline rather than a pill. */
+
+.tab-strip {
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 2px;
+}
+
+.tab-strip button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: -1px;
+  padding: 6px 12px;
+}
+
+.tab-strip button:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+
+.tab-strip button.selected {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+/* ------------------------------------------------------- position picker */
+
+.position-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.position-picker button {
+  align-items: flex-start;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.position-picker button.selected {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.position-picker strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.position-picker small {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.check {
+  align-items: center;
+  color: var(--text-dim);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 6px;
+}
+
+.check input {
+  accent-color: var(--accent);
+  margin: 0;
 }

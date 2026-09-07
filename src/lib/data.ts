@@ -18,6 +18,7 @@ import {
 } from "@solana/spl-token";
 import {
   ACCOUNT_LEN,
+  amountOf,
   BINS_PER_ARRAY,
   Ladder,
   PROGRAM_ID,
@@ -27,6 +28,7 @@ import {
   binArrayPda,
   configFilters,
   feeRateForStep,
+  mintOf,
   parseBin,
   parseConfig,
   parsePool,
@@ -40,7 +42,6 @@ import {
   type PoolView,
   type PositionView
 } from "@taper/sdk";
-import { amountOf } from "./accounts";
 
 export type Keyed<T> = { address: PublicKey; view: T };
 
@@ -173,7 +174,7 @@ export async function listWalletTokens(
   for (const { account } of [...spl.value, ...token2022.value]) {
     const data = account.data;
     if (data.length < 72) continue;
-    const mint = new PublicKey(data.subarray(0, 32)).toBase58();
+    const mint = mintOf(data).toBase58();
     held.set(mint, (held.get(mint) ?? 0n) + amountOf(data));
   }
 

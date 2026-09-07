@@ -94,7 +94,7 @@ export function FeeFields({
         />
       </div>
 
-      <label className="field">
+      <div className="field">
         <span>Fee collection</span>
         <Segmented
           value={value.collectFeeMode}
@@ -104,7 +104,7 @@ export function FeeFields({
             { id: 1, label: "Quote only", hint: "Fee is always denominated in Y. Launch-friendly when Y is SOL or USDC." }
           ]}
         />
-      </label>
+      </div>
 
       <div className="form-grid">
         <Field

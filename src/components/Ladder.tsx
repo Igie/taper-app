@@ -17,7 +17,7 @@
  * decimals and the axis is scaled into human units.
  */
 import { useMemo, useState } from "react";
-import { BINS_PER_ARRAY, binArrayIndex } from "@taper/sdk";
+import { BINS_PER_ARRAY, binArrayIndex, priceScale } from "@taper/sdk";
 import { amount as fmtAmount, price as fmtPrice } from "../lib/format";
 
 export type Cell = {
@@ -72,7 +72,7 @@ export function Ladder({
 
   const peak = useMemo(() => Math.max(1, ...cells.map(liquidityOf)), [cells]);
   // A lamport price is Y-lamports per X-lamport; a reader wants Y per X.
-  const scale = 10 ** (decimalsX - decimalsY);
+  const scale = priceScale(decimalsX, decimalsY);
 
   // While dragging, the preview range wins over the committed one.
   const shown = drag

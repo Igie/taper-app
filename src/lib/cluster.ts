@@ -1,37 +1,28 @@
 /**
- * Which chain the app is pointed at, and through which endpoint.
+ * Which chain this browser is pointed at, and through which endpoint.
  *
- * Devnet is the default and the point of this app; localnet is here because
- * the same code should be exercisable against `localnet/` before it is
- * exercised against a public cluster. The distinction that matters downstream
- * is `hasWebsocket`: the LiteSVM server has no subscription endpoint, so
- * nothing in this app may ever call `confirmTransaction`.
+ * The networks themselves — their ids, labels, default endpoints, whether they
+ * have a WebSocket, and where Solana Explorer looks — live in `@taper/sdk`,
+ * because they are not this app's opinion: a script, the localnet console and
+ * any third-party client need the same three answers. What is left here is the
+ * part that only makes sense in a browser, and it is exactly two things.
  *
- * The endpoint is a *separate* choice from the cluster, and one a visitor can
- * make for themselves. Browsing pools and positions is `getProgramAccounts`,
- * which the public devnet endpoint throttles hard and some providers refuse
- * outright, so the app that ships with a shared endpoint is the app that
- * breaks first — and no build-time variable helps a user whose page is already
- * loaded. An override is stored per cluster in this browser, and nowhere else:
- * an endpoint with a key in it belongs to the person who pasted it, not to a
- * bundle everyone downloads.
+ * **The endpoint this deployment ships with** comes from `VITE_*_RPC`, so a
+ * build can point at a private RPC without the SDK knowing anything about
+ * Vite.
+ *
+ * **The endpoint a visitor chooses for themselves** is stored per network in
+ * `localStorage`. Browsing pools and positions is `getProgramAccounts`, which
+ * public endpoints throttle hard and some providers refuse outright, so the
+ * app that ships with one shared endpoint is the app that breaks first — and
+ * no build-time variable helps a user whose page is already loaded. An
+ * endpoint with a key in it belongs to the person who pasted it, not to a
+ * bundle everyone downloads, so it is kept here and sent nowhere else.
  */
-export type ClusterId = "devnet" | "localnet";
+import { NETWORKS, networkFor, normaliseEndpoint, withEndpoint, type NetworkId, type ResolvedNetwork } from "@taper/sdk";
 
-export type Cluster = {
-  id: ClusterId;
-  label: string;
-  /** What the app is actually talking to: the override, or `defaultEndpoint`. */
-  endpoint: string;
-  /** What it would talk to with no override — what this deployment shipped. */
-  defaultEndpoint: string;
-  /** True when this browser is pointed somewhere other than the default. */
-  overridden: boolean;
-  hasWebsocket: boolean;
-  /** Devnet SOL is free; localnet SOL is free and instant. */
-  faucet: boolean;
-  explorerSuffix: string;
-};
+export type ClusterId = NetworkId;
+export type Cluster = ResolvedNetwork;
 
 /**
  * The endpoint this deployment ships with, made absolute.
@@ -51,60 +42,33 @@ function envEndpoint(value: string | undefined, fallback: string): string {
   return raw;
 }
 
-const DEVNET: Cluster = {
-  id: "devnet",
-  label: "Devnet",
-  endpoint: envEndpoint(import.meta.env.VITE_DEVNET_RPC as string, "https://api.devnet.solana.com"),
-  defaultEndpoint: envEndpoint(import.meta.env.VITE_DEVNET_RPC as string, "https://api.devnet.solana.com"),
-  overridden: false,
-  hasWebsocket: true,
-  faucet: true,
-  explorerSuffix: "?cluster=devnet"
+const ENV_RPC: Record<ClusterId, string | undefined> = {
+  "mainnet-beta": import.meta.env.VITE_MAINNET_RPC as string | undefined,
+  devnet: import.meta.env.VITE_DEVNET_RPC as string | undefined,
+  localnet: import.meta.env.VITE_LOCALNET_RPC as string | undefined
 };
 
-const LOCALNET: Cluster = {
-  id: "localnet",
-  label: "Localnet",
-  endpoint: envEndpoint(import.meta.env.VITE_LOCALNET_RPC as string, "http://127.0.0.1:8899"),
-  defaultEndpoint: envEndpoint(import.meta.env.VITE_LOCALNET_RPC as string, "http://127.0.0.1:8899"),
-  overridden: false,
-  hasWebsocket: false,
-  faucet: true,
-  explorerSuffix: "?cluster=custom&customUrl=http%3A%2F%2F127.0.0.1%3A8899"
-};
+/**
+ * Which networks this build offers, in the order the picker lists them.
+ *
+ * Mainnet is hidden unless the deployment names an endpoint for it. That is
+ * not a security decision — the program is the same address on every network
+ * and anyone may point their own browser anywhere — it is an honesty one: the
+ * public mainnet endpoint refuses `getProgramAccounts` at this app's usage, so
+ * offering mainnet without an endpoint offers a page that cannot list a pool.
+ */
+const bases = NETWORKS.filter((n) => n.id !== "mainnet-beta" || Boolean(ENV_RPC["mainnet-beta"]?.trim())).map(
+  (n) => ({ ...n, defaultEndpoint: envEndpoint(ENV_RPC[n.id], n.defaultEndpoint) })
+);
 
-export const CLUSTERS: Cluster[] = [DEVNET, LOCALNET];
+export const CLUSTERS: Cluster[] = bases.map((n) => withEndpoint(n));
+
+const DEFAULT_CLUSTER: ClusterId = CLUSTERS.some((c) => c.id === "devnet") ? "devnet" : CLUSTERS[0].id;
 
 const STORE_KEY = "taper.cluster.v1";
 const ENDPOINT_KEY = "taper.rpc.v1";
 
 export type Endpoints = Partial<Record<ClusterId, string>>;
-
-/**
- * A URL this app can actually talk to, or a sentence saying why not.
- *
- * Rejecting a WebSocket URL is worth doing here rather than letting web3.js
- * fail later: `wss://` is what a provider's dashboard shows next to the HTTP
- * endpoint, and it is the easy one to copy by mistake.
- */
-export function normaliseEndpoint(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) throw new Error("Enter an RPC URL.");
-
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw new Error("That is not a URL. It should start with https://");
-  }
-  if (url.protocol === "ws:" || url.protocol === "wss:") {
-    throw new Error("That is the WebSocket endpoint. Use the HTTP one — it usually starts https://");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("An RPC endpoint has to be http:// or https://");
-  }
-  return url.toString().replace(/\/$/, "");
-}
 
 export function loadEndpoints(): Endpoints {
   try {
@@ -130,49 +94,29 @@ export function saveEndpoints(endpoints: Endpoints) {
   }
 }
 
-/** A cluster as it is actually configured in this browser. */
+/** A network as it is actually configured in this browser. */
 export function resolveCluster(base: Cluster, endpoints: Endpoints): Cluster {
-  const override = endpoints[base.id];
-  if (!override || override === base.defaultEndpoint) return base;
-  return { ...base, endpoint: override, overridden: true };
+  return withEndpoint(base, endpoints[base.id]);
 }
 
 export function loadCluster(): Cluster {
-  const stored = localStorage.getItem(STORE_KEY);
-  const found = CLUSTERS.find((c) => c.id === stored);
-  return resolveCluster(found ?? DEVNET, loadEndpoints());
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(STORE_KEY);
+  } catch {
+    // Storage disabled; the default is as good an answer as any.
+  }
+  const found = CLUSTERS.find((c) => c.id === stored) ?? CLUSTERS.find((c) => c.id === DEFAULT_CLUSTER);
+  return resolveCluster(found ?? CLUSTERS[0], loadEndpoints());
 }
 
 export function saveCluster(id: ClusterId) {
-  localStorage.setItem(STORE_KEY, id);
-}
-
-/** The host, for a status chip that has no room for the whole URL. */
-export function endpointLabel(endpoint: string) {
   try {
-    return new URL(endpoint).host;
+    localStorage.setItem(STORE_KEY, id);
   } catch {
-    return endpoint;
+    // As above.
   }
 }
 
-/**
- * Whether a failed read is the endpoint's fault rather than the chain's.
- *
- * Worth separating, because the two have opposite fixes and the app cannot
- * tell them apart from the message alone: an empty pool list on a throttled
- * endpoint looks exactly like a cluster with no pools on it.
- */
-export function isEndpointFailure(message: string) {
-  // The status codes are bounded so an address that happens to contain "429"
-  // is not read as a rate limit.
-  return /\b(429|403|410|50[234])\b|too many requests|rate.?limit|forbidden|unauthorized|method not (found|supported)|not enabled|excluded from account secondary indexes|failed to fetch|load failed|networkerror|fetch failed|econnrefused|socket hang up|timed? ?out/i.test(
-    message
-  );
-}
-
-export const explorerAccount = (cluster: Cluster, address: string) =>
-  `https://explorer.solana.com/address/${address}${cluster.explorerSuffix}`;
-
-export const explorerTx = (cluster: Cluster, signature: string) =>
-  `https://explorer.solana.com/tx/${signature}${cluster.explorerSuffix}`;
+/** Present so a caller can name a network it has not selected. */
+export const clusterFor = networkFor;

@@ -13,7 +13,7 @@
         "buffer": "^6.0.3",
         "react": "^19.1.1",
         "react-dom": "^19.1.1",
-        "taper-amm-sdk": "^0.1.0",
+        "taper-amm-sdk": "^0.1.1",
       },
       "devDependencies": {
         "@types/node": "^22.0.0",
@@ -772,7 +772,7 @@
 
     "supports-color": ["supports-color@8.1.1", "", { "dependencies": { "has-flag": "^4.0.0" } }, "sha512-MpUEN2OodtUzxvKQl72cUF7RQ5EiHsGvSsVG0ia9c5RbWGL2CI4C7EpPS8UTBIplnlzZiNuV56w+FuNxy3ty2Q=="],
 
-    "taper-amm-sdk": ["taper-amm-sdk@0.1.0", "", { "peerDependencies": { "@solana/spl-token": "^0.4.13", "@solana/web3.js": "^1.98.4" } }, "sha512-lBEU1XZwtmoaBviILYKwS3o8cuMpoD+fQYaW4gSxXe3FM9WaDEODmDZ3vQftxNnB1Q5QXmMvtUOSJui9VxSDkQ=="],
+    "taper-amm-sdk": ["taper-amm-sdk@0.1.1", "", { "peerDependencies": { "@solana/spl-token": "^0.4.13", "@solana/web3.js": "^1.98.4" } }, "sha512-OB6zNkB1BLLCZQbQppMua8Q06l8xqlz/lkHq/ODHSuDuY8JHYBwTe0s82sgrrmdbNryzgPuZySsqDzni70MDFw=="],
 
     "terser": ["terser@5.51.2", "", { "dependencies": { "@jridgewell/source-map": "^0.3.3", "acorn": "^8.15.0", "commander": "^2.20.0", "source-map-support": "~0.5.20" }, "bin": { "terser": "bin/terser" } }, "sha512-bWnjSNscmuI+GJze6ZupnHP8G/cTcsJF+bXCeQknk2SHQsgbNJnLrqiH9jZ2W4STPVXH2mDKKRX3iwPhc9Cn/Q=="],
 

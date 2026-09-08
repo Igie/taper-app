@@ -16,26 +16,36 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
   buildConfig,
   explorerAccount,
+  feeRateForStep,
+  halfLifeForStrength,
   halfLifeForTaper,
   initializeConfigIx,
   Ladder,
+  ladderSpan,
+  strengthForHalfLife,
+  strengthForTaper,
+  TAPER_STRENGTH_REF_BINS,
+  taperForStrength,
   updateConfigIx,
-  usableRange,
   validateConfig,
+  type BandLimit,
   type ConfigParams,
   type ConfigView,
+  type LadderSpan,
   type UpdateConfigParams
 } from "taper-amm-sdk";
 import { useCluster, useToasts } from "../lib/providers";
 import { listConfigs, type Keyed } from "../lib/data";
 import { ADMIN_AUTHORITY, PRESETS, presetFor, presetParams } from "../lib/presets";
-import { price as fmtPrice, shortAddress } from "../lib/format";
+import { percentOfBps, price as fmtPrice, shortAddress } from "../lib/format";
 import { send, TxFailure } from "../lib/tx";
 import { useAsync } from "../lib/useAsync";
-import { Empty, Field, LoadError, Panel, Segmented } from "../components/primitives";
+import { Empty, Field, LoadError, Panel, Slider } from "../components/primitives";
 import {
+  dynamicFeeIsOn,
   FeeFields,
   FeePreview,
+  FeeRate,
   FEE_SCHEDULE_KEYS,
   feeScheduleOf,
   type FeeSchedule
@@ -107,6 +117,10 @@ export function Configs({ isAdmin, onChanged }: { isAdmin: boolean; onChanged: (
             const preset = presetFor(c.view.authority, c.view.index);
             const ladder = new Ladder(c.view.baseWidthQ64, c.view.taperQ64);
             const halfLife = halfLifeForTaper(c.view.taperQ64);
+            // The config's own band is what it trades over; the ladder's is
+            // the most it could be widened to. Showing both is the only way
+            // "usable band" answers the question a creator is actually asking.
+            const span = ladderSpan(c.view.baseWidthQ64, c.view.taperQ64);
             return (
               <div key={key} className="preset static">
                 <header>
@@ -123,19 +137,64 @@ export function Configs({ isAdmin, onChanged }: { isAdmin: boolean; onChanged: (
                   <dt>taper</dt>
                   <dd className="mono">
                     {Number.isFinite(halfLife)
-                      ? `halves every ${Math.round(halfLife).toLocaleString()} bins`
+                      ? `halves every ${Math.round(halfLife).toLocaleString()} bins ` +
+                        `(strength ${strengthForTaper(c.view.taperQ64).toFixed(3)})`
                       : "none — uniform, exactly DLMM"}
                   </dd>
-                  <dt>usable band</dt>
+                  <dt>band on this config</dt>
                   <dd className="mono">
-                    bins {c.view.minBinId.toLocaleString()} to {c.view.maxBinId.toLocaleString()}
+                    {(c.view.maxBinId - c.view.minBinId + 1).toLocaleString()} bins (
+                    {c.view.minBinId.toLocaleString()} to {c.view.maxBinId.toLocaleString()})
+                    {(c.view.minBinId > span.minBinId || c.view.maxBinId < span.maxBinId) && (
+                      <>
+                        {" "}
+                        <span className="why">narrowed from what the ladder supports; widenable</span>
+                      </>
+                    )}
+                  </dd>
+                  <dt>price span</dt>
+                  <dd className="mono">
+                    10^{(
+                      Math.log10(ladder.price(c.view.maxBinId) / ladder.price(c.view.minBinId))
+                    ).toFixed(1)}{" "}
+                    ×
+                  </dd>
+                  <dt>bins per 10× move</dt>
+                  <dd className="mono">
+                    {Math.round(span.binsPerDecadeAtAnchor).toLocaleString()} at the anchor
+                  </dd>
+                  <dt>bin width</dt>
+                  <dd className="mono">
+                    {(ladder.stepBpX100(c.view.minBinId) / 100).toFixed(2)} bps →{" "}
+                    {(ladder.stepBpX100(c.view.maxBinId) / 100).toFixed(2)} bps
                   </dd>
                   <dt>price ceiling</dt>
                   <dd className="mono">
-                    {Number.isFinite(ladder.priceCeiling()) ? fmtPrice(ladder.priceCeiling()) : "none"}
+                    {Number.isFinite(ladder.priceCeiling()) ? decades(ladder.priceCeiling()) : "none"}
+                  </dd>
+                  <dt>base fee at anchor</dt>
+                  <dd className="mono">
+                    <FeeRate rate={feeRateForStep(ladder.stepBpX100(0), c.view, 0)} />
+                  </dd>
+                  <dt>at peak volatility</dt>
+                  <dd className="mono">
+                    {dynamicFeeIsOn(c.view) ? (
+                      <FeeRate
+                        rate={feeRateForStep(
+                          ladder.stepBpX100(0),
+                          c.view,
+                          c.view.maxVolatilityAccumulator
+                        )}
+                      />
+                    ) : (
+                      "dynamic fee off"
+                    )}
                   </dd>
                   <dt>protocol share</dt>
-                  <dd className="mono">{(c.view.protocolShare / 100).toFixed(1)}% of fees</dd>
+                  <dd className="mono">
+                    {percentOfBps(c.view.protocolShare)} of fees{" "}
+                    <span className="alt">{c.view.protocolShare.toLocaleString()} bps</span>
+                  </dd>
                   <dt>fee collection</dt>
                   <dd className="mono">{c.view.collectFeeMode === 1 ? "quote only" : "input token"}</dd>
                   <dt>authority</dt>
@@ -198,7 +257,7 @@ export function Configs({ isAdmin, onChanged }: { isAdmin: boolean; onChanged: (
           <div className="preset-list">
             {PRESETS.map((preset) => {
               const params = presetParams(preset);
-              const ladder = new Ladder(params.baseWidthQ64, params.taperQ64);
+              const span = ladderSpan(params.baseWidthQ64, params.taperQ64);
               const exists = published.has(preset.index);
               return (
                 <div key={preset.index} className="preset static">
@@ -209,14 +268,16 @@ export function Configs({ isAdmin, onChanged }: { isAdmin: boolean; onChanged: (
                   <dl>
                     <dt>step at anchor</dt>
                     <dd className="mono">{preset.bps} bps</dd>
-                    <dt>usable band</dt>
+                    <dt>fee at rest</dt>
                     <dd className="mono">
-                      {params.minBinId.toLocaleString()} to {params.maxBinId.toLocaleString()}
+                      <FeeRate rate={feeRateForStep(preset.bps * 100, params, 0)} />
                     </dd>
-                    <dt>price ceiling</dt>
+                    <dt>protocol share</dt>
                     <dd className="mono">
-                      {Number.isFinite(ladder.priceCeiling()) ? fmtPrice(ladder.priceCeiling()) : "none"}
+                      {percentOfBps(params.protocolShare)} of fees{" "}
+                      <span className="alt">{params.protocolShare.toLocaleString()} bps</span>
                     </dd>
+                    <LadderSpanRows span={span} />
                   </dl>
                   <p className="hint">{preset.blurb}</p>
                   <div className="actions">
@@ -260,6 +321,83 @@ export function Configs({ isAdmin, onChanged }: { isAdmin: boolean; onChanged: (
   );
 }
 
+// ------------------------------------------------------------------ ladder
+
+/**
+ * What each of the five band limits means, in the terms a creator can act on.
+ *
+ * A band's width is the first thing anyone asks about a config and the least
+ * self-explanatory, because the number that moves it — the bin step — moves it
+ * *inversely* and for two entirely different reasons at the two ends of the
+ * step range. Naming the binding limit is what makes the readout actionable
+ * rather than merely honest.
+ */
+const LIMIT_REASON: Record<BandLimit, string> = {
+  price: "the Q64.64 price envelope, ±2^60 — about 36 decades, whatever the step",
+  "step-too-wide": "bins reach the 400 bps cap; widths grow going down under a taper",
+  "step-too-fine": "bins reach the 0.01 bps floor; widths shrink going up under a taper",
+  resolution: "adjacent bins would round onto the same Q64.64 price",
+  bitmap: "the pool's inline bitmap, which only addresses bins ±35,840"
+};
+
+/** A price ratio as a power of ten, since these run from 1e-17 to 1e18. */
+const decades = (n: number) =>
+  n >= 1e6 || n < 1e-6 ? `10^${Math.log10(n).toFixed(1)}` : fmtPrice(n);
+
+/**
+ * The whole of what a ladder addresses: bins, price, and what stops it.
+ *
+ * Shared by the three places a ladder is shown — a config on chain, a preset
+ * about to be published, and a draft being typed — because the question is the
+ * same in all three and an answer that differed between them would read as a
+ * disagreement rather than as three views.
+ *
+ * The prices are **ratios**, deliberately unlabelled by token: a config is
+ * pair-agnostic, and bin 0 is 1.0 Y-lamport per X-lamport. What a pair's
+ * decimals shift is both endpoints together, so `span` — the distance between
+ * them — is the number that carries across pairs, and it is the one shown
+ * first.
+ */
+function LadderSpanRows({ span, detailed }: { span: LadderSpan; detailed?: boolean }) {
+  const uniform = !Number.isFinite(span.priceCeiling);
+  return (
+    <>
+      <dt>usable band</dt>
+      <dd className="mono">
+        {span.bins.toLocaleString()} bins ({span.minBinId.toLocaleString()} to{" "}
+        {span.maxBinId.toLocaleString()})
+      </dd>
+      <dt>price span</dt>
+      <dd className="mono">
+        10^{span.decades.toFixed(1)} ×{detailed && <> — {decades(span.minPrice)} to {decades(span.maxPrice)}</>}
+      </dd>
+      <dt>bins per 10× move</dt>
+      <dd className="mono">{Math.round(span.binsPerDecadeAtAnchor).toLocaleString()} at the anchor</dd>
+      <dt>bin width</dt>
+      <dd className="mono">
+        {(span.widestStepBpX100 / 100).toFixed(2)} bps at the floor →{" "}
+        {(span.narrowestStepBpX100 / 100).toFixed(2)} bps at the top
+      </dd>
+      <dt>price ceiling</dt>
+      <dd className="mono">{uniform ? "none — uniform" : decades(span.priceCeiling)}</dd>
+      {detailed && (
+        <>
+          <dt>band floor set by</dt>
+          <dd className="mono">
+            <span className="why">{LIMIT_REASON[span.floorLimit]}</span>
+          </dd>
+          <dt>band top set by</dt>
+          <dd className="mono">
+            <span className="why">{LIMIT_REASON[span.ceilingLimit]}</span>
+          </dd>
+          <dt>bin arrays to cover it</dt>
+          <dd className="mono">{span.binArrays.toLocaleString()} × 6,792 B of rent, if every bin were used</dd>
+        </>
+      )}
+    </>
+  );
+}
+
 // ------------------------------------------------------------------ create
 
 /**
@@ -283,13 +421,30 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
 
   const [index, setIndex] = useState(firstFree);
   const [bps, setBps] = useState(50);
-  const [uniform, setUniform] = useState(0);
-  const [halfLifeBins, setHalfLifeBins] = useState(4_000);
+  /**
+   * The taper is one number, and the dial and the half-life box both write it.
+   *
+   * Keeping `strength` as the state rather than a half-life is what makes
+   * "uniform" a position on the dial instead of a mode beside it: strength 0
+   * is τ = 1 exactly, so a pool opted out of the taper is the same
+   * `MAX_TAPER_Q64` the DLMM-equivalence guards check for. Storing the
+   * half-life instead would need `Infinity` in a number input.
+   */
+  const [strength, setStrength] = useState(() => strengthForHalfLife(4_000));
   const [band, setBand] = useState<{ min: number; max: number }>();
   const [schedule, setSchedule] = useState<FeeSchedule>(() => feeScheduleOf(buildConfig(0, 50, 4_000)));
   const [busy, setBusy] = useState(false);
 
-  const halfLife = uniform ? Infinity : halfLifeBins;
+  const halfLife = halfLifeForStrength(strength);
+  const uniform = strength <= 0;
+  /**
+   * Both controls clamp to the dial's own ends, so neither can put the other
+   * out of range. A typed half-life below the reference is the only way that
+   * could happen, and silently accepting it would leave the slider pinned at
+   * an end while the ladder kept moving underneath it.
+   */
+  const setTaper = (next: number) =>
+    setStrength(Number.isFinite(next) ? Math.min(Math.max(next, 0), 1) : 0);
 
   /**
    * The whole draft, or the reason there isn't one. `buildConfig` throws when
@@ -298,11 +453,11 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
    */
   type Draft =
     | { ok: false; error: string }
-    | { ok: true; params: ConfigParams; usableMin: number; usableMax: number; problems: string[] };
+    | { ok: true; params: ConfigParams; span: LadderSpan; problems: string[] };
 
   const draft = useMemo<Draft>(() => {
-    if (!(bps > 0) || (!uniform && !(halfLifeBins > 0))) {
-      return { ok: false, error: "Enter a positive step, and a positive half-life." };
+    if (!(bps > 0)) {
+      return { ok: false, error: "Enter a positive step at the anchor." };
     }
     let base: ConfigParams;
     try {
@@ -310,14 +465,14 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-    const [usableMin, usableMax] = usableRange(base.baseWidthQ64, base.taperQ64);
+    const span = ladderSpan(base.baseWidthQ64, base.taperQ64);
     const params: ConfigParams = {
       ...base,
-      minBinId: band?.min ?? usableMin,
-      maxBinId: band?.max ?? usableMax
+      minBinId: band?.min ?? span.minBinId,
+      maxBinId: band?.max ?? span.maxBinId
     };
-    return { ok: true, params, usableMin, usableMax, problems: validateConfig(params) };
-  }, [index, bps, uniform, halfLifeBins, halfLife, band, schedule]);
+    return { ok: true, params, span, problems: validateConfig(params) };
+  }, [index, bps, halfLife, band, schedule]);
 
   const ladder = draft.ok ? new Ladder(draft.params.baseWidthQ64, draft.params.taperQ64) : undefined;
   const problems = draft.ok ? draft.problems : [];
@@ -362,6 +517,7 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
           min={0}
           max={65_535}
           onChange={setIndex}
+          showHint
           hint="Per-authority preset index; part of the config address. Yours to number as you like."
         />
         <Field
@@ -371,33 +527,46 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
           max={400}
           step={1}
           onChange={setBps}
-          hint="Width of bin 0. Bins widen going down and tighten going up, unless the ladder is uniform."
+          showHint
+          hint="How much price one bin covers at bin 0 (price 1.0). It is the resolution the ladder trades in, and it also anchors the fee: the base fee is a whole-number multiple of this width, so changing it moves the fee at rest in the schedule below."
         />
       </div>
 
-      <div className="field">
-        <span>Taper</span>
-        <Segmented
-          value={uniform}
-          onChange={setUniform}
-          options={[
-            { id: 0, label: "Tapered", hint: "Widths decay geometrically going up the ladder." },
-            { id: 1, label: "Uniform (τ = 1)", hint: "A constant bin step: exactly DLMM's ladder, and no price ceiling." }
-          ]}
+      <Slider
+        label="Taper"
+        value={strength}
+        min={0}
+        max={1}
+        step={0.005}
+        onChange={setTaper}
+        readout={
+          uniform
+            ? "off — uniform, exactly DLMM"
+            : `halves every ${Math.round(halfLife).toLocaleString()} bins`
+        }
+        ends={["uniform (τ = 1)", "tightest"]}
+        hint="How fast a bin's width decays going up the ladder. At zero every bin is the same width and the ladder is DLMM's; turning it up makes bins coarse where the token is cheap and fine where it is expensive — paid for with a price ceiling, since the widths then form a convergent series."
+      />
+
+      <div className="form-grid">
+        <Field
+          label="Half-life (bins)"
+          value={uniform ? 0 : Math.round(halfLife)}
+          min={0}
+          onChange={(v) => setTaper(strengthForHalfLife(v))}
+          showHint
+          hint={`The dial written the other way round: bins over which a bin's width halves. 0 means uniform — it never halves — and ${TAPER_STRENGTH_REF_BINS} is the tightest the dial goes.`}
+        />
+        <Field
+          label="τ (read-only)"
+          value={Number((Number(taperForStrength(strength)) / 2 ** 64).toFixed(8))}
+          step={0.00000001}
+          disabled
+          onChange={() => {}}
+          showHint
+          hint="What the config actually stores, alongside w0. Both are fixed at publication."
         />
       </div>
-
-      {!uniform && (
-        <div className="form-grid">
-          <Field
-            label="Half-life (bins)"
-            value={halfLifeBins}
-            min={1}
-            onChange={setHalfLifeBins}
-            hint="Bins over which the width halves. Shorter buys coarse cheap bins at the cost of a lower price ceiling."
-          />
-        </div>
-      )}
 
       {clash && (
         <p className="hint warn">
@@ -411,38 +580,36 @@ function CreateConfig({ usedIndexes, onDone }: { usedIndexes: Set<number>; onDon
       {draft.ok && ladder && (
         <>
           <dl className="readout">
-            <dt>usable band</dt>
-            <dd className="mono">
-              {draft.usableMin.toLocaleString()} to {draft.usableMax.toLocaleString()}
-            </dd>
-            <dt>price ceiling</dt>
-            <dd className="mono">
-              {Number.isFinite(ladder.priceCeiling()) ? fmtPrice(ladder.priceCeiling()) : "none"}
-            </dd>
-            <dt>step at band floor</dt>
-            <dd className="mono">{(ladder.stepBpX100(draft.params.minBinId) / 100).toFixed(2)} bps</dd>
-            <dt>step at band ceiling</dt>
-            <dd className="mono">{(ladder.stepBpX100(draft.params.maxBinId) / 100).toFixed(2)} bps</dd>
+            <LadderSpanRows span={draft.span} detailed />
           </dl>
+          <p className="hint">
+            The band is the widest run of bins whose arithmetic stays sound, and it is quoted in{" "}
+            <em>bins</em> while every limit that sets it is a limit on <em>price</em>. So a coarser step
+            always buys fewer bins over the same amount of price — halving the step roughly doubles the bin
+            count and leaves the span where it was. Prices here are ratios of Y-lamports to X-lamports; a
+            pair's decimals slide both ends together and leave the span alone.
+          </p>
 
           <div className="form-grid">
             <Field
               label="Lower bin"
               value={draft.params.minBinId}
               onChange={(v) => setBand({ min: v, max: draft.params.maxBinId })}
-              hint="Defaults to the widest band this ladder supports. A narrower band can be widened later; it can never be narrowed."
+              showHint
+              hint="Defaults to the widest band this ladder supports. A narrower band can be widened later; it can never be narrowed, because the dropped bins would keep their liquidity and never trade again."
             />
             <Field
               label="Upper bin"
               value={draft.params.maxBinId}
               onChange={(v) => setBand({ min: draft.params.minBinId, max: v })}
-              hint="Defaults to the widest band this ladder supports."
+              showHint
+              hint="Defaults to the widest band this ladder supports. Narrowing costs nothing but choice — bin arrays are rented as they are touched, not up front."
             />
           </div>
 
           <details className="advanced">
             <summary>Fee schedule</summary>
-            <FeeFields value={schedule} onChange={setSchedule} />
+            <FeeFields value={schedule} stepBpX100={ladder.stepBpX100(0)} onChange={setSchedule} />
             <FeePreview stepBpX100={ladder.stepBpX100(0)} schedule={schedule} />
           </details>
         </>
@@ -490,7 +657,8 @@ function EditConfig({ config, onDone }: { config: Keyed<ConfigView>; onDone: () 
   const [busy, setBusy] = useState(false);
 
   const ladder = new Ladder(config.view.baseWidthQ64, config.view.taperQ64);
-  const [usableMin, usableMax] = usableRange(config.view.baseWidthQ64, config.view.taperQ64);
+  const span = ladderSpan(config.view.baseWidthQ64, config.view.taperQ64);
+  const [usableMin, usableMax] = [span.minBinId, span.maxBinId];
 
   const changed = useMemo(() => {
     const next: UpdateConfigParams = {};
@@ -549,7 +717,12 @@ function EditConfig({ config, onDone }: { config: Keyed<ConfigView>; onDone: () 
         here applies to all of them from the next trade onwards — not just to pools created afterwards.
       </p>
 
-      <FeeFields value={schedule} onChange={setSchedule} disabled={busy} />
+      <FeeFields
+        value={schedule}
+        stepBpX100={ladder.stepBpX100(0)}
+        onChange={setSchedule}
+        disabled={busy}
+      />
       <FeePreview stepBpX100={ladder.stepBpX100(0)} schedule={schedule} />
 
       <div className="form-grid">
@@ -558,18 +731,30 @@ function EditConfig({ config, onDone }: { config: Keyed<ConfigView>; onDone: () 
           value={band.min}
           max={config.view.minBinId}
           disabled={busy}
+          showHint
           onChange={(v) => setBand({ ...band, min: v })}
-          hint={`Widen only. This ladder supports down to ${usableMin.toLocaleString()}.`}
+          hint={`Widen only. This ladder supports down to ${usableMin.toLocaleString()}, where ${LIMIT_REASON[span.floorLimit]} stops it.`}
         />
         <Field
           label="Upper bin"
           value={band.max}
           min={config.view.maxBinId}
           disabled={busy}
+          showHint
           onChange={(v) => setBand({ ...band, max: v })}
-          hint={`Widen only. This ladder supports up to ${usableMax.toLocaleString()}.`}
+          hint={`Widen only. This ladder supports up to ${usableMax.toLocaleString()}, where ${LIMIT_REASON[span.ceilingLimit]} stops it.`}
         />
       </div>
+
+      <dl className="readout">
+        <LadderSpanRows span={span} detailed />
+      </dl>
+      <p className="hint">
+        The band above is what this config trades over today; the rows here are the most the ladder could
+        ever be widened to. Widening is free and reversible in one direction only — a bin dropped from the
+        band keeps its liquidity and is still withdrawable, but no swap crosses it again, which is why the
+        program refuses to narrow.
+      </p>
 
       <p className="hint">
         The ladder itself — <span className="mono">w0</span> and <span className="mono">τ</span> — is fixed

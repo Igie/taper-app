@@ -45,7 +45,7 @@
  */
 import { useMemo, useState } from "react";
 import { BINS_PER_ARRAY, binArrayIndex, priceScale } from "taper-amm-sdk";
-import { amount as fmtAmount, price as fmtPrice } from "../lib/format";
+import { amount as fmtAmount, feeBps, feePercent, price as fmtPrice } from "../lib/format";
 
 export type Cell = {
   binId: number;
@@ -442,7 +442,10 @@ export function Ladder({
             <dt>step</dt>
             <dd>{(hover.stepBpX100 / 100).toFixed(2)} bps</dd>
             <dt>swap fee</dt>
-            <dd>{((hover.feeRate / 1e9) * 100).toFixed(4)}%</dd>
+            <dd>
+              {feePercent(hover.feeRate)}{" "}
+              <span className="alt">{feeBps(hover.feeRate).toFixed(2)} bps</span>
+            </dd>
             <dt>{symbolX}</dt>
             <dd>{fmtAmount(hover.amountX, decimalsX)}</dd>
             <dt>{symbolY}</dt>

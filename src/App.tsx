@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { PROGRAM_ID, endpointLabel, explorerAccount, explorerTx } from "@taper/sdk";
+import { PROGRAM_ID, endpointLabel, explorerAccount, explorerTx } from "taper-amm-sdk";
 import { useCluster, useToasts } from "./lib/providers";
 import { readableError } from "./lib/tx";
 import { RpcPicker } from "./components/RpcPicker";

@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { isEndpointFailure } from "@taper/sdk";
+import { isEndpointFailure } from "taper-amm-sdk";
 
 /**
  * A titled box, or — when `header` is given — a box whose header *is* a

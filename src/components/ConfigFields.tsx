@@ -6,7 +6,7 @@
  * config exists. Keeping one copy means the hints — the part that actually
  * explains what a number does — cannot drift between them.
  */
-import { FEE_PRECISION, feeRateForStep, MAX_PROTOCOL_SHARE, type ConfigParams } from "@taper/sdk";
+import { FEE_PRECISION, feeRateForStep, MAX_PROTOCOL_SHARE, type ConfigParams } from "taper-amm-sdk";
 import { Field, Segmented } from "./primitives";
 
 /** Exactly the fields `update_config` can move, minus the band. */

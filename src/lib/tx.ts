@@ -13,7 +13,7 @@
  * the 200k default. Every instruction in the program touches bins.
  *
  * Everything the program itself knows — which guard rejected a call, and what
- * its number means — comes from `@taper/sdk`. Nothing in this file decodes the
+ * its number means — comes from `taper-amm-sdk`. Nothing in this file decodes the
  * program's errors; it decides how to send, wait, and pay.
  */
 import {
@@ -25,7 +25,7 @@ import {
   type Signer
 } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
-import { describeError } from "@taper/sdk";
+import { describeError } from "taper-amm-sdk";
 
 export class TxFailure extends Error {
   constructor(

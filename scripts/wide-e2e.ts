@@ -65,7 +65,7 @@ import {
   type PositionView,
   type Step,
   type TokenPair
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { presetParams, PRESETS } from "../src/lib/preset-defs";
 import { loadBins } from "../src/lib/data";
 
@@ -171,7 +171,7 @@ async function runSteps(steps: Step[], pool: PublicKey, label: string) {
 }
 
 // `binArrayPda` needs the pool; wrap it so `runSteps` reads cleanly.
-const { binArrayPda } = await import("@taper/sdk");
+const { binArrayPda } = await import("taper-amm-sdk");
 const binArrayOf = (pool: PublicKey, index: number) => binArrayPda(pool, index);
 
 // --------------------------------------------------------------------------

@@ -25,7 +25,7 @@ import {
   type ConfigParams,
   type ConfigView,
   type UpdateConfigParams
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { useCluster, useToasts } from "../lib/providers";
 import { listConfigs, type Keyed } from "../lib/data";
 import { ADMIN_AUTHORITY, PRESETS, presetFor, presetParams } from "../lib/presets";

@@ -9,7 +9,7 @@
  * The form itself is shared with `Manage → Add`; see `DepositForm`.
  */
 import type { ReactNode } from "react";
-import type { TokenPair } from "@taper/sdk";
+import type { TokenPair } from "taper-amm-sdk";
 import type { PoolBundle } from "./PoolView";
 import type { Toast } from "../lib/providers";
 import { DepositForm, type Range } from "../components/DepositForm";

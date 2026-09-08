@@ -41,7 +41,7 @@ import {
   type MintInfo,
   type PoolView,
   type PositionView
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 
 export type Keyed<T> = { address: PublicKey; view: T };
 

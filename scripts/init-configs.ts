@@ -33,7 +33,7 @@ import {
   PublicKey,
   Transaction
 } from "@solana/web3.js";
-import { Ladder, configPda, initializeConfigIx, networkFor, parseConfig } from "@taper/sdk";
+import { Ladder, configPda, initializeConfigIx, networkFor, parseConfig } from "taper-amm-sdk";
 import { PRESETS, presetParams } from "../src/lib/preset-defs";
 
 function arg(name: string, fallback: string) {

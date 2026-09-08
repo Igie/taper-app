@@ -11,7 +11,7 @@
  * point of screening client side.
  */
 import { PublicKey } from "@solana/web3.js";
-import { mintRejection } from "@taper/sdk";
+import { mintRejection } from "taper-amm-sdk";
 import type { WalletToken } from "../lib/data";
 import { amount as fmtAmount, shortAddress } from "../lib/format";
 

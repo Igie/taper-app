@@ -36,12 +36,12 @@
  * confusing error.
  *
  * The plan itself is fixed at build time and never re-split mid-run — see the
- * note in `@taper/sdk`'s `plan` module for why re-planning would over-deposit.
+ * note in `taper-amm-sdk`'s `plan` module for why re-planning would over-deposit.
  */
 import { useCallback, useRef, useState } from "react";
 import { PublicKey, type TransactionInstruction } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { CU_HEADROOM_NATIVE, stepIsLegal, type Step } from "@taper/sdk";
+import { CU_HEADROOM_NATIVE, stepIsLegal, type Step } from "taper-amm-sdk";
 import { send, TxFailure } from "./tx";
 
 export type StepState = "pending" | "running" | "done" | "skipped" | "failed" | "unknown";

@@ -90,7 +90,7 @@ import {
   type PositionView,
   type Step,
   type TokenPair
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { presetParams, PRESETS } from "../src/lib/preset-defs";
 import { loadBins } from "../src/lib/data";
 

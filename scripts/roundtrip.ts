@@ -49,7 +49,7 @@ import {
   type PoolView,
   type Quote,
   type Shape
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { PRESETS, presetParams, type Preset } from "../src/lib/preset-defs";
 
 const DECIMALS = 6;

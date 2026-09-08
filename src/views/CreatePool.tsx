@@ -27,7 +27,7 @@ import {
   priceScale,
   type ConfigView,
   type MintInfo
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { navigate } from "../App";
 import { useCluster, useToasts } from "../lib/providers";
 import { listConfigs, listWalletTokens, loadMint, type Keyed, type WalletToken } from "../lib/data";

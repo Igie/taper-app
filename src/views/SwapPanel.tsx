@@ -23,7 +23,7 @@ import {
   type BinView,
   type TokenAccountState,
   type TokenPair
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import type { PoolBundle } from "./PoolView";
 import type { Toast } from "../lib/providers";
 import { loadBalances } from "../lib/accounts";

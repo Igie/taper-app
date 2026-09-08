@@ -21,7 +21,7 @@ import {
   type PoolView,
   type PositionSummary,
   type PositionView
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { navigate } from "../App";
 import { useCluster } from "../lib/providers";
 import { listPositions, loadConfig, loadPool, loadTokens, type TokenMeta } from "../lib/data";

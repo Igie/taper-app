@@ -2,7 +2,7 @@
  * Which chain this browser is pointed at, and through which endpoint.
  *
  * The networks themselves — their ids, labels, default endpoints, whether they
- * have a WebSocket, and where Solana Explorer looks — live in `@taper/sdk`,
+ * have a WebSocket, and where Solana Explorer looks — live in `taper-amm-sdk`,
  * because they are not this app's opinion: a script, the localnet console and
  * any third-party client need the same three answers. What is left here is the
  * part that only makes sense in a browser, and it is exactly two things.
@@ -19,7 +19,7 @@
  * endpoint with a key in it belongs to the person who pasted it, not to a
  * bundle everyone downloads, so it is kept here and sent nowhere else.
  */
-import { NETWORKS, networkFor, normaliseEndpoint, withEndpoint, type NetworkId, type ResolvedNetwork } from "@taper/sdk";
+import { NETWORKS, networkFor, normaliseEndpoint, withEndpoint, type NetworkId, type ResolvedNetwork } from "taper-amm-sdk";
 
 export type ClusterId = NetworkId;
 export type Cluster = ResolvedNetwork;

@@ -5,7 +5,7 @@
  * bun, outside Vite. Who may publish these lives in `presets.ts`, which is
  * browser-only.
  */
-import { buildConfig, type ConfigParams } from "@taper/sdk";
+import { buildConfig, type ConfigParams } from "taper-amm-sdk";
 
 export type Preset = {
   index: number;

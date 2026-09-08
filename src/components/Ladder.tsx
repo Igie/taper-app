@@ -44,7 +44,7 @@
  * decimals and the axis is scaled into human units.
  */
 import { useMemo, useState } from "react";
-import { BINS_PER_ARRAY, binArrayIndex, priceScale } from "@taper/sdk";
+import { BINS_PER_ARRAY, binArrayIndex, priceScale } from "taper-amm-sdk";
 import { amount as fmtAmount, price as fmtPrice } from "../lib/format";
 
 export type Cell = {

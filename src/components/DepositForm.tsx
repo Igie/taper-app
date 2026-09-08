@@ -65,7 +65,7 @@ import {
   type Shape,
   type TokenAccountState,
   type TokenPair
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import type { PoolBundle } from "../views/PoolView";
 import type { Toast } from "../lib/providers";
 import { useCluster } from "../lib/providers";

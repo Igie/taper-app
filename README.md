@@ -6,7 +6,7 @@ liquidity, and swap. It talks to a real cluster through a real wallet.
 This is not [`../ui`](../ui). That one is a localnet instrument — a burner
 keypair, self-minted test tokens, a steerable clock, and every admin lever
 exposed. This one assumes you are a user, not the person debugging the
-program. Both import the ABI from [`@taper/sdk`](../sdk), so neither can drift
+program. Both import the ABI from [`taper-amm-sdk`](../sdk), so neither can drift
 from the other.
 
 ## Running it
@@ -164,7 +164,7 @@ A position may span up to 1,400 bins, but it is created holding at most 70 and
 a deposit carries about 70, so a wide band is always several transactions. Two
 different limits produce them: `resize_position` grows the account (the runtime
 caps growth at 10,240 bytes a transaction), and `add_liquidity` fills it (the
-packet caps the bps table). `@taper/sdk`'s `planDeposit` emits both — open,
+packet caps the bps table). `taper-amm-sdk`'s `planDeposit` emits both — open,
 grow, then fill — taking the shape over the *whole* band and then slicing it,
 so a split deposit lays down the same curve an undivided one would.
 `lib/batch.ts` signs the pieces one at a time, passing `Step.signers` along

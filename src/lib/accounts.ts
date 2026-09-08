@@ -2,13 +2,13 @@
  * Reading the wallet's token accounts.
  *
  * The addresses, the balance parser and the create instructions all live in
- * `@taper/sdk`, because they are pure functions of the ABI and every client
+ * `taper-amm-sdk`, because they are pure functions of the ABI and every client
  * needs them. What is left here is the half that needs a `Connection`, which
  * the SDK deliberately does not have: fetching. See `token.ts` and `native.ts`
  * there for everything else.
  */
 import { Connection, PublicKey } from "@solana/web3.js";
-import { ataFor, amountOf, type TokenAccountState } from "@taper/sdk";
+import { ataFor, amountOf, type TokenAccountState } from "taper-amm-sdk";
 
 export async function loadTokenAccounts(
   connection: Connection,

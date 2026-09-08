@@ -9,7 +9,7 @@
 import { useMemo, useState } from "react";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
-import { displayPrice, Ladder, POOL_DISABLED, amountOf } from "@taper/sdk";
+import { displayPrice, Ladder, POOL_DISABLED, amountOf } from "taper-amm-sdk";
 import { navigate } from "../App";
 import { useCluster } from "../lib/providers";
 import { listConfigs, listPools, loadTokens, type Keyed, type TokenMeta } from "../lib/data";
@@ -17,7 +17,7 @@ import { presetFor } from "../lib/presets";
 import { amount, price as fmtPrice, shortAddress } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
 import { Empty, LoadError, Panel } from "../components/primitives";
-import type { ConfigView, PoolView } from "@taper/sdk";
+import type { ConfigView, PoolView } from "taper-amm-sdk";
 
 type Row = {
   address: PublicKey;

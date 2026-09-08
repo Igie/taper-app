@@ -1,5 +1,5 @@
 /** Number and address formatting. Nothing here touches the chain. */
-import { FEE_PRECISION } from "@taper/sdk";
+import { FEE_PRECISION } from "taper-amm-sdk";
 
 export const shortAddress = (address: string, lead = 4, tail = 4) =>
   address.length <= lead + tail + 1 ? address : `${address.slice(0, lead)}…${address.slice(-tail)}`;

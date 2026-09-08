@@ -63,7 +63,7 @@ import {
   swapArrayIndexes,
   swapIx,
   type TokenPair
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { presetParams, PRESETS } from "../src/lib/preset-defs";
 import { loadBalances } from "../src/lib/accounts";
 import { listWalletTokens } from "../src/lib/data";

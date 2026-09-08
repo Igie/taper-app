@@ -36,7 +36,7 @@ import {
   type ConfigView,
   type PoolView as PoolViewData,
   type PositionView
-} from "@taper/sdk";
+} from "taper-amm-sdk";
 import { useCluster, useToasts } from "../lib/providers";
 import {
   listPositions,

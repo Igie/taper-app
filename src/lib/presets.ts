@@ -14,7 +14,7 @@
  * whose authority is named on screen.
  */
 import { PublicKey } from "@solana/web3.js";
-import { configPda } from "@taper/sdk";
+import { configPda } from "taper-amm-sdk";
 import { PRESETS, type Preset } from "./preset-defs";
 
 export { PRESETS, presetParams, type Preset } from "./preset-defs";

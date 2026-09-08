@@ -1,4 +1,5 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { isEndpointFailure } from "taper-amm-sdk";
 
 /**
@@ -36,6 +37,63 @@ export function Panel({
       </header>
       <div className="panel-body">{children}</div>
     </section>
+  );
+}
+
+/**
+ * A dialog over the page, in a portal.
+ *
+ * The portal is not decoration. The panels here sit in a grid, the ladder
+ * stacks overlays on top of one another with explicit `z-index`, and a form
+ * scrolls inside its own panel — so a dialog rendered where it is *used* is a
+ * dialog clipped by whichever of those it happened to land in. Rendering it at
+ * `document.body` is what makes "on top of everything" true rather than
+ * approximately true.
+ *
+ * Escape and a click on the backdrop both close it, because a list you opened
+ * to look at something is one you close without choosing.
+ */
+export function Modal({
+  title,
+  aside,
+  onClose,
+  children
+}: {
+  title: string;
+  aside?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    // The page behind must not scroll under the dialog: a wheel over a list
+    // that has reached its end otherwise scrolls whatever is beneath it, and
+    // the dialog appears to drift.
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+        <header>
+          <h2>{title}</h2>
+          {aside}
+          <button type="button" className="ghost icon" aria-label="Close" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        {children}
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -142,7 +200,9 @@ export function Field({
   max,
   step = 1,
   hint,
-  disabled
+  readout,
+  disabled,
+  showHint
 }: {
   label: string;
   value: number;
@@ -151,11 +211,23 @@ export function Field({
   max?: number;
   step?: number;
   hint?: string;
+  /**
+   * What the number in the box works out to, beside the name — a share typed
+   * in bps read back as a percentage, a base factor read back as the fee it
+   * charges. Borrowed from `Slider` for the same reason: the unit a config is
+   * *stored* in is rarely the unit anyone reasons in, and a form showing only
+   * the stored one leaves the arithmetic to the reader.
+   */
+  readout?: ReactNode;
   disabled?: boolean;
+  showHint?: boolean;
 }) {
   return (
-    <label className="field" title={hint}>
-      <span>{label}</span>
+    <label className="field" title={showHint ? undefined : hint}>
+      <span>
+        {label}
+        {readout !== undefined && <em>{readout}</em>}
+      </span>
       <input
         type="number"
         value={Number.isFinite(value) ? value : ""}
@@ -165,7 +237,69 @@ export function Field({
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
       />
+      {showHint && hint && <small className="field-hint">{hint}</small>}
     </label>
+  );
+}
+
+/**
+ * A continuous setting, with the number it currently reads beside its name.
+ *
+ * Distinct from `Field` rather than a mode of it: what makes a slider worth
+ * having is that the *consequences* move as you drag, so the value belongs in
+ * the label where it is read on the way past, not in a box to be typed into.
+ * Where a caller wants both — a dial to explore with and a box for an exact
+ * answer — it pairs this with a `Field` writing the same state, so the two
+ * cannot drift apart.
+ */
+export function Slider({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  readout,
+  ends,
+  hint,
+  disabled
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  /** What `value` means, rendered beside the label. */
+  readout?: string;
+  /** Captions under the two extremes, which is where a dial needs naming. */
+  ends?: [string, string];
+  hint?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="field slider-field">
+      <span>
+        {label}
+        {readout !== undefined && <em>{readout}</em>}
+      </span>
+      <input
+        type="range"
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+      {ends && (
+        <div className="slider-ends">
+          <span>{ends[0]}</span>
+          <span>{ends[1]}</span>
+        </div>
+      )}
+      {hint && <small className="field-hint">{hint}</small>}
+    </div>
   );
 }
 

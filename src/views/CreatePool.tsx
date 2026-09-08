@@ -31,8 +31,9 @@ import {
 import { navigate } from "../App";
 import { useCluster, useToasts } from "../lib/providers";
 import { listConfigs, listWalletTokens, loadMint, type Keyed, type WalletToken } from "../lib/data";
+import { covers, metadataFor, type JupToken } from "../lib/jupiter";
 import { presetFor } from "../lib/presets";
-import { price as fmtPrice, shortAddress } from "../lib/format";
+import { plain, price as fmtPrice, shortAddress } from "../lib/format";
 import { readableError, send, TxFailure } from "../lib/tx";
 import { useAsync } from "../lib/useAsync";
 import { Empty, LoadError, Panel } from "../components/primitives";
@@ -129,6 +130,10 @@ export function CreatePool({ onCreated }: { onCreated: () => void }) {
   const [mintB, setMintB] = useState("");
   const [configAddress, setConfigAddress] = useState<string>();
   const [priceInput, setPriceInput] = useState("1");
+  // Whether the starting price is the person's answer or still the app's. Only
+  // an untouched field is overwritten when a market price arrives, so a typed
+  // number is never replaced under the cursor.
+  const [priceEdited, setPriceEdited] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const a = useScreenedMint(mintA);
@@ -157,6 +162,51 @@ export function CreatePool({ onCreated }: { onCreated: () => void }) {
     const infoY = y.equals(a.info.address) ? a.info : b.info;
     return { infoX, infoY, swapped: !x.equals(a.info.address) };
   }, [a.info, b.info]);
+
+  /**
+   * What the pair trades at, if anything knows.
+   *
+   * Both sides are priced in dollars independently, so the ratio is the price
+   * of one X in Y — which is exactly what the ladder is asked for, and what
+   * the field below holds. It is a starting point rather than an oracle: the
+   * pool opens where it is told to and arbitrage does the rest, but opening a
+   * SOL/USDC pool at 1.0 because that was the placeholder is a mistake worth
+   * making impossible to make by accident.
+   */
+  const [meta, setMeta] = useState<Map<string, JupToken>>(new Map());
+  useEffect(() => {
+    if (!ordered || !covers(cluster.id)) {
+      setMeta(new Map());
+      return;
+    }
+    const mints = [ordered.infoX.address.toBase58(), ordered.infoY.address.toBase58()];
+    let live = true;
+    void metadataFor(mints).then((found) => live && setMeta(found));
+    return () => {
+      live = false;
+    };
+  }, [ordered, cluster.id]);
+
+  const market = useMemo(() => {
+    if (!ordered) return undefined;
+    const x = meta.get(ordered.infoX.address.toBase58());
+    const y = meta.get(ordered.infoY.address.toBase58());
+    // A zero price is Jupiter saying it does not know, not that the token is
+    // worthless — either way there is no ratio to take.
+    if (!x?.usdPrice || !y?.usdPrice) return undefined;
+    return { price: x.usdPrice / y.usdPrice, usdX: x.usdPrice, usdY: y.usdPrice };
+  }, [ordered, meta]);
+
+  useEffect(() => {
+    if (!market || priceEdited) return;
+    setPriceInput(plain(market.price));
+  }, [market, priceEdited]);
+
+  /** What to call a mint in prose: Jupiter's ticker, the chain's, or neither. */
+  const nameFor = (mint: PublicKey) =>
+    meta.get(mint.toBase58())?.symbol ??
+    held.data?.find((t) => t.address.equals(mint))?.symbol ??
+    shortAddress(mint.toBase58());
 
   const plan = useMemo(() => {
     if (!ordered || !chosen) return undefined;
@@ -283,14 +333,54 @@ export function CreatePool({ onCreated }: { onCreated: () => void }) {
         )}
 
         <label className="field wide">
-          <span>Starting price (second per first, in whole tokens)</span>
+          {/* Named after the *ordered* pair, not the order they were typed in:
+              the ladder is asked for a Y-per-X price, and once the mints have
+              been swapped "second per first" names the reciprocal. */}
+          <span>
+            {ordered
+              ? `Starting price — ${nameFor(ordered.infoY.address)} per ${nameFor(ordered.infoX.address)}, in whole tokens`
+              : "Starting price (in whole tokens)"}
+          </span>
           <input
             className="mono"
             inputMode="decimal"
             value={priceInput}
-            onChange={(e) => setPriceInput(e.target.value.replace(/[^\d.eE+-]/g, ""))}
+            onChange={(e) => {
+              setPriceEdited(true);
+              setPriceInput(e.target.value.replace(/[^\d.eE+-]/g, ""));
+            }}
           />
         </label>
+
+        {market && ordered && (
+          <p className="hint market-line">
+            <span>
+              Jupiter has {nameFor(ordered.infoX.address)} at ${fmtPrice(market.usdX)} and{" "}
+              {nameFor(ordered.infoY.address)} at ${fmtPrice(market.usdY)} — a market price of{" "}
+              <strong className="mono">{fmtPrice(market.price)}</strong>.
+            </span>
+            {priceInput !== plain(market.price) && (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  // Back to tracking, not to a frozen copy: asking for the
+                  // market price is the opposite of having typed one.
+                  setPriceEdited(false);
+                  setPriceInput(plain(market.price));
+                }}
+              >
+                Use it
+              </button>
+            )}
+          </p>
+        )}
+        {ordered && !market && covers(cluster.id) && (
+          <p className="hint dim">
+            Jupiter prices one or both of these mints at nothing, so there is no market price to start from.
+            Whatever you enter is where the pool opens.
+          </p>
+        )}
 
         <div className="actions">
           <button type="button" className="primary" disabled={blocked || busy} onClick={create}>
@@ -371,6 +461,19 @@ export function CreatePool({ onCreated }: { onCreated: () => void }) {
               <dd className="mono">{plan.activeId}</dd>
               <dt>price at that bin</dt>
               <dd className="mono">{fmtPrice(plan.actual)}</dd>
+              {market && (
+                <>
+                  <dt>against the market</dt>
+                  <dd className="mono">
+                    {plan.actual === market.price
+                      ? "exactly"
+                      : `${plan.actual > market.price ? "+" : ""}${(
+                          ((plan.actual - market.price) / market.price) *
+                          100
+                        ).toFixed(2)}%`}
+                  </dd>
+                </>
+              )}
               <dt>bin width there</dt>
               <dd className="mono">{plan.stepBps.toFixed(2)} bps</dd>
               <dt>price ceiling</dt>

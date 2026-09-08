@@ -133,11 +133,29 @@ keeping on purpose is unwrapped along with it, which the panels say. Rent is
 paid in SOL and cannot come out of a wrapped balance, which is why the max
 button stops short of the whole balance on the SOL side.
 
-**The mint fields list what you hold.** SOL first, then every token in the
-wallet, largest first, each screened against what `initialize_pool` accepts —
-a mint the program would reject is shown disabled with the reason rather than
-hidden. Pasting an address still works: a pool can be opened against a token
-this wallet has never held.
+**The mint fields open a list of what you hold.** SOL first, then every token
+in the wallet by what it is worth, each screened against what `initialize_pool`
+accepts — a mint the program would reject is shown disabled with the reason
+rather than hidden, and so are NFTs and empty balances, behind a filter that
+counts them. Pasting an address still works, in the same search field: a pool
+can be opened against a token this wallet has never held.
+
+**Names, icons and prices come from Jupiter; everything else comes from the
+chain.** `lib/jupiter.ts` is the whole of that — one batched, cached, paced
+call to `lite-api.jup.ag/tokens/v2/search`, which needs no key and reflects the
+browser's origin, so nothing is baked into the bundle. It is **mainnet only**:
+Jupiter indexes mainnet, so on devnet and localnet a token is named by its own
+Token-2022 metadata or by its address, and there are no prices. Balances,
+decimals, the token program and the extension screening are always read from
+the chain, never from the list — a picker that trusted a third party about what
+a mint *is* would be a picker that could be lied to.
+
+**Two priced mints give the pool a starting price.** Both sides are quoted in
+dollars independently, so their ratio is the Y-per-X price the ladder is asked
+for, and it fills the starting-price field until you type over it. The readout
+then says how far the bin the pool will actually open at sits from that price,
+because bins are discrete and the nearest one is rarely exact. On a network
+Jupiter does not index there is no market price and the field is yours alone.
 
 **There is no indexer.** Pools and positions come from `getProgramAccounts`
 filtered by `dataSize`, which is fine at devnet scale and would not be at
@@ -206,6 +224,7 @@ src/
   lib/accounts.ts   fetching the trader's token balances
   lib/batch.ts      signs a multi-transaction plan in order, resumably
   lib/presets.ts    this deployment's presets and its admin gate
+  lib/jupiter.ts    token names, icons and USD prices — mainnet only, paced
   views/            pools, pool detail, create, positions, presets
   views/NewPosition.tsx     opening one: a band, a shape, two amounts
   views/ManagePosition.tsx  add / remove / move, with claim and close beside them

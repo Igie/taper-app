@@ -92,8 +92,20 @@ export async function loadConfig(connection: Connection, address: PublicKey): Pr
  */
 export async function loadTokens(connection: Connection, mints: PublicKey[]): Promise<Map<string, TokenMeta>> {
   const unique = [...new Map(mints.map((m) => [m.toBase58(), m])).values()];
-  const accounts = await connection.getMultipleAccountsInfo(unique);
+  // `getMultipleAccounts` takes a hundred keys at a time. Every caller but the
+  // wallet picker asks about two, so the chunking is invisible to them and is
+  // what lets the picker ask about a whole wallet in one call.
+  const accounts: Awaited<ReturnType<Connection["getMultipleAccountsInfo"]>> = [];
+  for (let i = 0; i < unique.length; i += MULTIPLE_ACCOUNTS_LIMIT) {
+    accounts.push(...(await connection.getMultipleAccountsInfo(unique.slice(i, i + MULTIPLE_ACCOUNTS_LIMIT))));
+  }
   const out = new Map<string, TokenMeta>();
+
+  // The Token-2022 metadata extension is one request per mint, so the number
+  // of them is bounded rather than left to however many tokens a wallet holds.
+  // Past the budget a symbol falls back to the address, which is what an SPL
+  // mint gets anyway — no caller of this function asks about more than two.
+  let metadataBudget = ONCHAIN_METADATA_BUDGET;
 
   await Promise.all(
     unique.map(async (mint, i) => {
@@ -114,7 +126,7 @@ export async function loadTokens(connection: Connection, mints: PublicKey[]): Pr
       const carriesMetadata = info.extensions.some(
         (e) => e === ExtensionType.TokenMetadata || e === ExtensionType.MetadataPointer
       );
-      if (account.owner.equals(TOKEN_2022_PROGRAM_ID) && carriesMetadata) {
+      if (account.owner.equals(TOKEN_2022_PROGRAM_ID) && carriesMetadata && metadataBudget-- > 0) {
         const metadata = await getTokenMetadata(connection, mint, undefined, TOKEN_2022_PROGRAM_ID).catch(
           () => null
         );
@@ -141,8 +153,20 @@ export type WalletToken = TokenMeta & {
   isNative: boolean;
 };
 
-/** A mint's own limit on `getMultipleAccountsInfo`, minus the native one. */
-const MINT_LOOKUP_LIMIT = 99;
+/** The RPC's own cap on `getMultipleAccounts`. */
+const MULTIPLE_ACCOUNTS_LIMIT = 100;
+
+/** How many Token-2022 metadata reads one `loadTokens` call will make. */
+const ONCHAIN_METADATA_BUDGET = 40;
+
+/**
+ * How many held mints are resolved at all.
+ *
+ * Two `getMultipleAccounts` calls, which is the point at which reading a
+ * wallet stops being free. A wallet holding more than this is holding airdrop
+ * dust, and the picker's own filters were going to hide most of it anyway.
+ */
+const MINT_LOOKUP_LIMIT = 200;
 
 /**
  * What this wallet holds, as things a pool could be opened against.

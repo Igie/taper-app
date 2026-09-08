@@ -22,7 +22,7 @@
     "buffer": "^6.0.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "taper-amm-sdk": "^0.1.0"
+    "taper-amm-sdk": "^0.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

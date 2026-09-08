@@ -7,7 +7,7 @@
  * the slippage tolerance, in that order. Getting that order wrong on a
  * fee-bearing mint produces a bound that can never be met.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
   amountAfterTransferFee,
@@ -34,11 +34,17 @@ import { Info, Panel, Segmented } from "../components/primitives";
 export function SwapPanel({
   bundle,
   tokens,
+  header,
+  onBusyChange,
   onDone,
   push
 }: {
   bundle: PoolBundle;
   tokens: TokenPair;
+  /** The pool page's view picker, which stands in for this panel's title. */
+  header?: ReactNode;
+  /** Raised while a signature is in flight, so the picker refuses to unmount us. */
+  onBusyChange?: (busy: boolean) => void;
   onDone: () => void;
   push: (toast: Omit<Toast, "id">) => void;
 }) {
@@ -49,6 +55,11 @@ export function SwapPanel({
   const [slippageBps, setSlippageBps] = useState(50);
   const [busy, setBusy] = useState(false);
   const [accounts, setAccounts] = useState<{ states: TokenAccountState[]; lamports: bigint }>();
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+    return () => onBusyChange?.(false);
+  }, [busy, onBusyChange]);
 
   const owner = wallet.publicKey;
   const entries = useMemo(
@@ -205,7 +216,7 @@ export function SwapPanel({
   }
 
   return (
-    <Panel title="Swap">
+    <Panel title="Swap" header={header}>
       <Segmented
         value={swapForY ? "xy" : "yx"}
         options={[

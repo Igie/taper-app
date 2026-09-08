@@ -23,11 +23,18 @@
   --y: #57c6d6;
   --y-soft: rgba(87, 198, 214, 0.16);
   --accent: #7c8cf8;
+  /* Your position's band. Neutral rather than a hue of its own: the accent is
+     already the drag selection and the active bin, and this shares its claim —
+     "yours" — with the white outline on `.bin.mine`. */
+  --band: #e8edf7;
   --good: #55c98a;
   --bad: #ef6f6f;
   --warn: #e2b04a;
 
   --radius: 9px;
+  /* The ladder's whole drawing height, however many panes divide it. Fixed so
+     that splitting pool / position / fees apart moves nothing below it. */
+  --ladder-h: 176px;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   color-scheme: dark;
@@ -231,7 +238,7 @@ main {
 .panel-body {
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 10px;
   padding: 12px;
 }
 
@@ -308,6 +315,23 @@ main {
 .field input:focus {
   border-color: var(--accent);
   outline: none;
+}
+
+/*
+ * An amount field whose token the selected range cannot hold — every bin in
+ * the range sits on the wrong side of the active bin. Dimmed rather than
+ * removed, and still typeable: the deposit button refuses and says why, which
+ * is more use than a field that silently disappears when the band is dragged
+ * across the price.
+ */
+.field.unusable input {
+  color: var(--text-faint);
+}
+
+.field.unusable > span em {
+  color: var(--warn);
+  font-style: normal;
+  text-transform: none;
 }
 
 .readout {
@@ -488,7 +512,7 @@ button.link {
 
 .empty-ladder {
   color: var(--text-faint);
-  padding: 48px 12px;
+  padding: 28px 12px;
   text-align: center;
 }
 
@@ -507,20 +531,117 @@ button.link {
   gap: 3px;
 }
 
+/*
+ * The chart proper: one pane, or three of them dividing the same height.
+ *
+ * `--ladder-h` is fixed and the panes are flex-grow inside it, gaps included,
+ * so opening a position splits the chart into pool / position / fees without
+ * the page moving under the cursor. Nothing in here is sized in px except that
+ * one container, which is what makes the split free.
+ */
+.ladder-panes {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  height: var(--ladder-h);
+  position: relative;
+  user-select: none;
+}
+
+.ladder-pane {
+  flex-basis: 0;
+  min-height: 0;
+  position: relative;
+}
+
+/* A floor per pane, so three stacked charts each have a baseline to read
+   heights against. Absolutely placed, so it costs none of the height. */
+.ladder-panes.split .ladder-pane::after {
+  background: var(--line-soft);
+  bottom: 0;
+  content: "";
+  height: 1px;
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
 .ladder-bars {
   align-items: flex-end;
   display: flex;
   gap: 1px;
-  height: 240px;
-  user-select: none;
+  height: 100%;
+  /* Every pointer belongs to the overlay: one hit target per bin for the
+     whole chart, rather than one per bin per pane. */
+  pointer-events: none;
 }
 
-.bin {
+.bar {
   align-items: flex-end;
-  cursor: crosshair;
   display: flex;
   flex: 1;
   height: 100%;
+  min-width: 0;
+}
+
+/* The pane's name and its own peak, floated over its bars rather than stacked
+   above them: a row of chrome per pane would eat the height the panes are
+   dividing. The plate is what keeps them legible against a full-height bar. */
+.pane-tag {
+  align-items: baseline;
+  display: flex;
+  gap: 7px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  z-index: 3;
+}
+
+.pane-name,
+.pane-peak {
+  background: rgba(18, 23, 33, 0.78);
+  border-radius: 3px;
+  font-size: 9.5px;
+  line-height: 1.55;
+  padding: 0 4px;
+}
+
+.pane-name {
+  color: var(--text-dim);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.pane-peak {
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+/* An empty pane says why rather than printing a peak of nothing. */
+.pane-peak.none {
+  font-family: inherit;
+  font-style: italic;
+}
+
+/*
+ * Everything bin-wide on one layer over the panes: the hit target, the drag
+ * selection, the uncreated-array hatch, the hover and the active bin. Laid out
+ * exactly as a pane is — one flex cell per bin, the same 1px gap — so a bin is
+ * one column through the whole chart and the active bin is one line down all
+ * of it, whether one pane is drawn or three.
+ */
+.ladder-hit {
+  display: flex;
+  gap: 1px;
+  inset: 0;
+  position: absolute;
+  z-index: 2;
+}
+
+.bin {
+  cursor: crosshair;
+  flex: 1;
   min-width: 0;
   position: relative;
 }
@@ -585,9 +706,102 @@ button.link {
   display: block;
 }
 
-.bin.mine .bin-stack .x,
-.bin.mine .bin-stack .y {
+/* Only drawn when the position has no pane of its own — see `Ladder`. */
+.bar.mine .bin-stack .x,
+.bar.mine .bin-stack .y {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+/*
+ * The selected position's band: a tint the width of the band and a hard line
+ * at each edge, so an empty bin inside the band still reads as yours.
+ *
+ * The tint sits on the column itself rather than on `::before`, which is
+ * already carrying the drag selection, the hatch and the hover — all of them
+ * semi-transparent, so the two compose instead of one winning. All four are on
+ * the overlay, so they wash across every pane at once: the band a position
+ * spans is the same bins in the position row as in the pool row.
+ */
+.bin.in-band {
+  background: rgba(232, 237, 247, 0.07);
+}
+
+.bin.band-lower {
+  box-shadow: inset 1px 0 0 rgba(232, 237, 247, 0.65);
+}
+
+.bin.band-upper {
+  box-shadow: inset -1px 0 0 rgba(232, 237, 247, 0.65);
+}
+
+/* A one-bin band is both edges at once. */
+.bin.band-lower.band-upper {
+  box-shadow:
+    inset 1px 0 0 rgba(232, 237, 247, 0.65),
+    inset -1px 0 0 rgba(232, 237, 247, 0.65);
+}
+
+.ladder-band {
+  display: flex;
+  gap: 1px;
+  height: 24px;
+}
+
+.band-cell {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.band-cell.on::before {
+  background: rgba(232, 237, 247, 0.38);
+  content: "";
+  height: 2px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 3px;
+}
+
+.band-cap {
+  background: var(--band);
+  border-radius: 1px;
+  height: 9px;
+  position: absolute;
+  top: 0;
+  width: 2px;
+}
+
+.band-cap.lo {
+  left: 0;
+}
+
+.band-cap.hi {
+  right: 0;
+}
+
+/* Anchored to its own edge and allowed to overflow the 1px-wide cell it
+   belongs to, which is the only way a bin id fits over a 400-bin window. */
+.band-label {
+  color: var(--band);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  position: absolute;
+  top: 12px;
+  white-space: nowrap;
+}
+
+.band-label.lo {
+  left: 0;
+}
+
+.band-label.hi {
+  right: 0;
+}
+
+.key.band-key::before {
+  background: var(--band);
 }
 
 .ladder-arrays {
@@ -967,12 +1181,24 @@ button.link {
   padding: 0 14px !important;
 }
 
+/*
+ * A reading width, not the window's width.
+ *
+ * Every panel here is a form or a readout, and both get harder to use the
+ * wider they are — a label at the left edge and its value at the right of a
+ * 1,900px screen are two separate things to look at. The ladder is the one
+ * element that wants the room, and 1,500px still draws its whole window at
+ * better than three pixels a bin.
+ */
 .stage {
-  flex: 1;
-  padding: 18px;
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  margin: 0 auto;
+  max-width: 1500px;
+  padding: 18px;
+  width: 100%;
 }
 
 .stage-grid {
@@ -985,14 +1211,7 @@ button.link {
 .pool-stage {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.pool-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 16px;
-  align-items: start;
+  gap: 12px;
 }
 
 .panel-actions {
@@ -1202,6 +1421,71 @@ button.link {
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
   margin-bottom: 10px;
+}
+
+/*
+ * A count, asked for the way it is thought about: a label, a stepper and the
+ * common answers on one line. It wraps rather than shrinking the field, since
+ * the number is the part being read.
+ */
+.step-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Two questions on one row — a width and a nudge — kept from reading as six
+   loose buttons. */
+.step-rule {
+  align-self: stretch;
+  background: var(--line);
+  margin: 0 2px;
+  width: 1px;
+}
+
+.step-label {
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stepper {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+}
+
+.stepper button.ghost {
+  background: transparent;
+  border: none;
+  min-height: 24px;
+  min-width: 26px;
+  padding: 0;
+}
+
+.stepper button.ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.stepper input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--mono);
+  padding: 0 4px;
+  text-align: center;
+  width: 48px;
+}
+
+.stepper input:focus {
+  outline: none;
 }
 
 /* -------------------------------------------------------------- rpc picker */
@@ -1588,6 +1872,32 @@ button.rpc-chip .tag {
   gap: 2px;
 }
 
+/*
+ * The pool page's view picker, which replaces its panel's title.
+ *
+ * The header keeps its own bottom border and the strip drops its, so the
+ * selected tab's underline lands *on* that one line rather than beside a
+ * second. Which means the header loses its vertical padding: the tabs supply
+ * it, so the underline can reach the edge it marks.
+ */
+.panel > header.tabbed {
+  align-items: stretch;
+  padding: 0 12px;
+}
+
+.panel > header.tabbed > *:not(.tab-strip) {
+  align-self: center;
+}
+
+.panel > header.tabbed > .tab-strip {
+  border-bottom: 0;
+}
+
+.panel > header.tabbed > .tab-strip button {
+  font-size: 12.5px;
+  padding: 10px 12px;
+}
+
 .tab-strip button {
   background: none;
   border: 0;
@@ -1607,6 +1917,74 @@ button.rpc-chip .tag {
 .tab-strip button.selected {
   border-bottom-color: var(--accent);
   color: var(--text);
+}
+
+/* -------------------------------------------------------- manage position */
+
+/*
+ * The manage panel is two columns, not one tall one.
+ *
+ * Which position, and what it is worth, is context you read *while* working in
+ * the verb next to it — stacked, the buttons sat a scroll below the numbers
+ * that decide which one to press. The aside is deliberately narrow: it holds
+ * readouts, and a readout that grows with the window only spreads further from
+ * its own label.
+ */
+.manage {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+}
+
+@media (max-width: 920px) {
+  .manage {
+    grid-template-columns: 1fr;
+  }
+}
+
+.manage-side,
+.manage-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* One per row in a narrow column, where the auto-fit grid would leave a
+   ragged last line and the picker would wrap mid-band. */
+.manage-side .metrics {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.manage-side .position-picker {
+  flex-direction: column;
+}
+
+.manage-side .position-picker button {
+  width: 100%;
+}
+
+/*
+ * The band a verb is aimed at, on one line: label, the ids, what they mean,
+ * and the way back. It replaces a pair of typed bin fields — the ladder is
+ * where the band is chosen now, so this states the answer rather than asking
+ * the question again.
+ */
+.target-row {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.target-row strong {
+  font-size: 13px;
+}
+
+.target-row .dim {
+  font-size: 11px;
 }
 
 /* ------------------------------------------------------- position picker */

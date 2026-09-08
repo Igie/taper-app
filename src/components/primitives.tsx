@@ -1,24 +1,37 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { isEndpointFailure } from "@taper/sdk";
 
+/**
+ * A titled box, or — when `header` is given — a box whose header *is* a
+ * control.
+ *
+ * The second form exists for the pool page, where three panels became three
+ * tabs. A tab strip above a header that names the tab again is the same word
+ * twice and a second bar of chrome to look past, so the strip takes the
+ * title's place and the panel keeps its `aside` on the right of the same row.
+ */
 export function Panel({
   title,
   icon,
+  header,
   aside,
   children
 }: {
-  title: string;
+  title?: string;
   icon?: ReactNode;
+  header?: ReactNode;
   aside?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="panel">
-      <header>
-        <h2>
-          {icon}
-          {title}
-        </h2>
+      <header className={header ? "tabbed" : undefined}>
+        {header ?? (
+          <h2>
+            {icon}
+            {title}
+          </h2>
+        )}
         {aside}
       </header>
       <div className="panel-body">{children}</div>

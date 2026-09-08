@@ -6,6 +6,18 @@
  * this reads a fixed stretch around the active bin and lets the user pan. What
  * is drawn is always the truth for that stretch — a bin the program has never
  * touched is filled in from the client's own ladder and marked as such.
+ *
+ * **The chart stays; the verb changes.** Swap, new position and manage are one
+ * panel behind a tab strip rather than three stacked under the ladder — they
+ * are alternatives, and stacked they pushed the manage panel's buttons a
+ * screen and a half below the chart every one of them is decided from. The
+ * strip lives in that panel's own header, so there is one bar of chrome rather
+ * than a tab named `Swap` above a header saying `SWAP`.
+ *
+ * Two pieces of state are shared across the three because they are one
+ * decision: the **ladder selection**, which is a new position's band, a move's
+ * target and a reshape's stretch, and **which position is selected**, which
+ * the chart draws. Both live here for that reason.
  */
 import { useCallback, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -15,6 +27,7 @@ import {
   explorerAccount,
   isEndpointFailure,
   Ladder as LadderMath,
+  MAX_BINS_PER_POSITION,
   POOL_DISABLED,
   priceScale,
   summarise,
@@ -38,7 +51,7 @@ import {
 import { presetFor } from "../lib/presets";
 import { amount, price as fmtPrice, shortAddress } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
-import { HoverCard, LoadError, Metric, Panel } from "../components/primitives";
+import { HoverCard, LoadError, Metric, Panel, Tabs } from "../components/primitives";
 import { Ladder } from "../components/Ladder";
 import { SwapPanel } from "./SwapPanel";
 import { NewPosition } from "./NewPosition";
@@ -46,6 +59,17 @@ import { ManagePosition } from "./ManagePosition";
 
 /** Bins either side of the active one to read in a single pass. */
 const WINDOW = BINS_PER_ARRAY * 3;
+
+/**
+ * The three things you can do to a pool, and only one of them at a time.
+ *
+ * They were three panels stacked under the ladder, which put the manage
+ * panel's buttons a screen and a half below the chart they are decided from —
+ * and the chart is the part every one of them is read against. Tabs keep the
+ * ladder in view and cost nothing, because these are alternatives rather than
+ * a sequence: nobody swaps *and* opens a position in the same gesture.
+ */
+type View = "swap" | "new" | "manage";
 
 export type PoolBundle = {
   address: PublicKey;
@@ -69,6 +93,18 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
   const [centre, setCentre] = useState<number>();
   const [selectedPosition, setSelectedPosition] = useState<string>();
   const [range, setRange] = useState<{ lower: number; upper: number }>();
+  // Undefined until the first click, so the default below may follow the data
+  // as it lands without ever overriding a choice already made.
+  const [chosenView, setChosenView] = useState<View>();
+  /**
+   * Whether the open view is in the middle of something.
+   *
+   * Switching tabs unmounts the panel, and a plan that has landed some of its
+   * transactions and not the rest lives only in that panel's memory — a fill
+   * leaves no witness on chain, so unmounting it could mean depositing twice
+   * on the retry. So the other tabs lock rather than the run being abandoned.
+   */
+  const [busy, setBusy] = useState(false);
 
   const key = address.toBase58();
   const owner = publicKey?.toBase58();
@@ -116,8 +152,14 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
     return map;
   }, [data?.cells]);
 
-  const position = data?.positions.find((p) => p.address.toBase58() === selectedPosition);
+  // The same fallback the panel below makes, so the band drawn is always the
+  // one the verbs would act on — including before the first selection lands.
+  const position =
+    data?.positions.find((p) => p.address.toBase58() === selectedPosition) ?? data?.positions[0];
   const summary = position ? summarise(position.view, bins) : undefined;
+  const band = position
+    ? { lower: position.view.lowerBinId, upper: position.view.upperBinId }
+    : undefined;
 
   const cells = useMemo(() => {
     if (!data) return [];
@@ -125,7 +167,16 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
       if (!position || !summary) return cell;
       const holding = summary.bins.find((b) => b.binId === cell.binId);
       return holding
-        ? { ...cell, share: holding.share, pendingFeeX: holding.feeX, pendingFeeY: holding.feeY }
+        ? {
+            ...cell,
+            share: holding.share,
+            // The position's cut of the bin, which is what the position row of
+            // the chart draws — the bin's own balances are the pool row.
+            myAmountX: holding.amountX,
+            myAmountY: holding.amountY,
+            pendingFeeX: holding.feeX,
+            pendingFeeY: holding.feeY
+          }
         : cell;
     });
   }, [data, position, summary]);
@@ -157,6 +208,36 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
   const tokens = tokenPairOf(data.pool);
   const activePrice = data.ladder.price(data.pool.activeId) * data.scale;
   const shownCentre = centre ?? data.pool.activeId;
+
+  /*
+   * Opens on the verb the wallet is most likely to want: manage, when it
+   * already holds something here, and otherwise open a position. Swapping is
+   * offered but is not what this app is for.
+   */
+  const view: View = chosenView ?? (data.positions.length ? "manage" : "new");
+  const viewTabs = (
+    <Tabs
+      value={view}
+      onChange={setChosenView}
+      tabs={(
+        [
+          { id: "swap", label: "Swap", hint: "trade against this pool" },
+          { id: "new", label: "New position", hint: "open a position over a band" },
+          {
+            id: "manage",
+            label:
+              data.positions.length > 1 ? `Manage (${data.positions.length})` : "Manage position",
+            hint: "add, remove, reshape or move what you already hold"
+          }
+        ] satisfies { id: View; label: string; hint: string }[]
+      ).map((tab) => ({
+        ...tab,
+        // Held rather than hidden: the run in flight is the reason, and the
+        // open tab is where it is explained.
+        disabled: busy && tab.id !== view
+      }))}
+    />
+  );
 
   return (
     <div className="pool-stage">
@@ -229,13 +310,38 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
             <button type="button" className="ghost" onClick={() => setCentre(shownCentre + WINDOW)}>
               higher →
             </button>
+            {/* Kept out of the three pan controls, because it is not a pan: a band
+               that has drifted off the window is exactly the one worth looking
+               at, and walking to it a window at a time is several clicks. */}
+            {band && (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setCentre(Math.round((band.lower + band.upper) / 2))}
+              >
+                centre on my band
+              </button>
+            )}
           </div>
         </div>
 
+        {/*
+          The drag is how a band is stated — for a new position, for a move and
+          for a reshape — so it is capped at what a *position* may span rather
+          than at what one transaction carries. The planners chunk the rest and
+          each form says how many signatures it will cost.
+        */}
         <Ladder
           cells={cells}
           activeId={data.pool.activeId}
+          band={band}
+          // Split into pool / position / fees only while a position is the
+          // thing being worked on. Opening a *new* one is a question about the
+          // pool, and a wallet that already holds something here would
+          // otherwise get two rows of somebody else's decision.
+          showPosition={view === "manage" && !!position}
           range={range}
+          maxSelectable={MAX_BINS_PER_POSITION}
           onSelectRange={(lower, upper) => setRange({ lower, upper })}
           decimalsX={data.pool.tokenXDecimals}
           decimalsY={data.pool.tokenYDecimals}
@@ -244,28 +350,49 @@ export function PoolView({ address, onChanged }: { address: PublicKey; onChanged
         />
       </Panel>
 
-      <div className="pool-columns">
-        <SwapPanel bundle={data} tokens={tokens} onDone={afterTx} push={push} />
+      {/*
+        One panel, whose header *is* the picker — a tab strip above a header
+        naming the same tab is the word twice and a second bar to look past.
+      */}
+      {view === "swap" && (
+        <SwapPanel
+          bundle={data}
+          tokens={tokens}
+          header={viewTabs}
+          onBusyChange={setBusy}
+          onDone={afterTx}
+          push={push}
+        />
+      )}
+
+      {view === "new" && (
         <NewPosition
           bundle={data}
           tokens={tokens}
           range={range}
           onRange={setRange}
+          header={viewTabs}
+          onBusyChange={setBusy}
           onDone={afterTx}
           push={push}
         />
-      </div>
+      )}
 
-      <ManagePosition
-        bundle={data}
-        tokens={tokens}
-        bins={bins}
-        selected={selectedPosition}
-        onSelect={setSelectedPosition}
-        range={range}
-        onDone={afterTx}
-        push={push}
-      />
+      {view === "manage" && (
+        <ManagePosition
+          bundle={data}
+          tokens={tokens}
+          bins={bins}
+          selected={selectedPosition}
+          onSelect={setSelectedPosition}
+          range={range}
+          onRange={setRange}
+          header={viewTabs}
+          onBusyChange={setBusy}
+          onDone={afterTx}
+          push={push}
+        />
+      )}
     </div>
   );
 }

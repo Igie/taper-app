@@ -2,9 +2,18 @@
  * The deposit form, shared by opening a position and adding to one.
  *
  * Both are the same instruction with the same planner behind them; the only
- * difference is whether the band is a choice or a fact. So the band is a prop:
- * `New position` hands it an editable range, `Manage → Add` hands it the band
- * the position already spans and shows it as a readout.
+ * difference is whether the range names a band to open or a stretch of one
+ * that exists. So the range is a prop: `New position` hands it an editable
+ * band, `Manage → Add` hands it the ladder selection clipped to the position's
+ * band and shows it as a readout.
+ *
+ * **The range is where the liquidity goes, not where the position goes.** A
+ * deposit into a few bins of a wide position is one `add_liquidity` over those
+ * bins — the band stays where it is, and `planDeposit` matches the stretch to
+ * the position that contains it rather than opening a second one over the same
+ * bins. The shape is normalised against the stretch, so narrowing the range is
+ * a different deposit and not a filtered one: all of what you enter lands in
+ * the bins named.
  *
  * Four constraints from the program shape it, and each is enforced here rather
  * than discovered as an error:
@@ -13,9 +22,19 @@
  *   carries fewer still, so a wide band is several positions and several
  *   signatures. `planDeposit` cuts it and `useBatch` signs the pieces in order.
  * - A bin **below** the active bin may only take Y, and one **above** it may
- *   only take X. The shape already respects that; the preview says so.
+ *   only take X — the active bin itself takes either, which is what makes
+ *   "reaches the active bin" the test rather than "crosses it". The shape
+ *   already places each token on its own side of the price; `takesX` /
+ *   `takesY` ask the same question of the range, and a token the range has
+ *   nowhere to put is refused at its own field rather than at the button:
+ *   the field empties and disables the moment the range moves off that side.
+ *   But it does **not** require both. Funding one side of a band that spans
+ *   the price is an ordinary deposit, and the other side's bins simply open
+ *   empty.
  * - Bins live in **arrays that must exist first**, and an array is 6,792 bytes
  *   of rent — the largest cost in the plan, and worth knowing before signing.
+ *   `planDeposit` rents only the arrays it actually funds, so a one-sided
+ *   deposit is quoted one-sided rent.
  * - Wrapped SOL is scratch space, so the SOL side is wrapped per transaction
  *   and the rent ahead is held back from the max button.
  *
@@ -25,9 +44,11 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import type { PublicKey } from "@solana/web3.js";
 import {
   ACCOUNT_LEN,
   ataFor,
+  compositionXShare,
   explorerTx,
   involvesSol,
   MAX_BINS_PER_POSITION,
@@ -61,6 +82,7 @@ export function DepositForm({
   bundle,
   tokens,
   range,
+  into,
   onRange,
   editableRange = false,
   onBusyChange,
@@ -69,7 +91,25 @@ export function DepositForm({
 }: {
   bundle: PoolBundle;
   tokens: TokenPair;
+  /**
+   * The stretch of bins this deposit fills.
+   *
+   * A band when the position is being opened, and any stretch of one when it
+   * already exists — `Manage → Add` passes the ladder selection clipped to the
+   * position's band, so a deposit lands where the chart says it will. The
+   * shape is normalised against it, and `takesX` / `takesY` are asked of it,
+   * which is what makes a one-sided stretch refuse the token it cannot hold.
+   */
   range?: Range;
+  /**
+   * The position this deposit is aimed at, when there is one.
+   *
+   * Only an ordering hint, and only needed because a *stretch* can sit inside
+   * more than one position when two of them overlap: the planner matches by
+   * band and takes the first that contains the range, so the aimed-at one goes
+   * to the front. Opening a position passes nothing.
+   */
+  into?: PublicKey;
   /** Ignored when the band is fixed, so `Add` may pass a no-op. */
   onRange: (range: Range) => void;
   editableRange?: boolean;
@@ -114,32 +154,108 @@ export function DepositForm({
     };
   }, [connection, entries, owner, bundle.pool.activeId]);
 
-  // A sensible default band: a spread around the active bin, inside the config.
-  // Only when the band is the user's to choose — a fixed one is already given.
-  useEffect(() => {
-    if (range || !editableRange) return;
+  /**
+   * A sensible default band: a spread around the active bin, inside the config.
+   *
+   * Held locally rather than written back through `onRange`, because that state
+   * is the *ladder selection* and is read by more than this form — `Manage`
+   * takes it as the band to move to. Seeding it would stage a move the user
+   * never asked for, so an untouched form shows this band and the ladder shows
+   * no selection until one is actually made.
+   */
+  const band = useMemo(() => {
+    if (range || !editableRange) return range;
     const half = 10;
-    onRange({
+    return {
       lower: Math.max(bundle.config.minBinId, bundle.pool.activeId - half),
       upper: Math.min(bundle.config.maxBinId, bundle.pool.activeId + half)
-    });
-  }, [
-    range,
-    editableRange,
-    onRange,
-    bundle.pool.activeId,
-    bundle.config.minBinId,
-    bundle.config.maxBinId
-  ]);
+    };
+  }, [range, editableRange, bundle.pool.activeId, bundle.config.minBinId, bundle.config.maxBinId]);
 
-  const width = range ? range.upper - range.lower + 1 : 0;
+  const width = band ? band.upper - band.lower + 1 : 0;
   const activeId = bundle.pool.activeId;
   const native = involvesSol(tokens.mintX, tokens.mintY);
+
+  /*
+   * Which of the two tokens this range can hold at all.
+   *
+   * A bin above the active one may only hold X and one below it only Y, so a
+   * band on one side of the price takes exactly one token and a band across it
+   * takes either or both. A property of the range, not of the plan or of the
+   * amounts — which is why it is answered before either is valid, and why the
+   * amount fields can say so before anything is typed.
+   *
+   * Note what it is not: a requirement to fund both sides. Funding one side of
+   * a band that spans the price opens the other side's bins empty, which is an
+   * ordinary way to wait for the price to come to you.
+   */
+  const takesX = band ? band.upper >= activeId : false;
+  const takesY = band ? band.lower <= activeId : false;
+
+  /*
+   * A range dragged off one side of the price takes that side's amount with
+   * it.
+   *
+   * The refusal has to happen at the field, not at the button: an amount that
+   * cannot be deposited is not a form to fix but a range that has moved, and
+   * leaving it typed behind a dead button reads as the app being broken. So
+   * the unusable field is emptied and disabled, which is the same answer the
+   * `wrongSide` guard below gives, given before the number can be entered.
+   *
+   * Cleared rather than carried, because carrying it is what would let a
+   * deposit go out ignoring it. That guard stays as the last defence — nothing
+   * should reach it now.
+   */
+  useEffect(() => {
+    if (band && !takesX) setAmountX("");
+    if (band && !takesY) setAmountY("");
+  }, [band, takesX, takesY]);
 
   // Room this form needs left in every packet for what it wraps around a step:
   // the compute-budget pair always, and the SOL wrapping when a side of the
   // pair is native. It narrows how many bins one position can carry.
   const headroom = native ? TX_HEADROOM_NATIVE : TX_HEADROOM;
+
+  /**
+   * What the active bin already holds, as a fraction of its value in X.
+   *
+   * The shape splits that one bin's weight by this rather than giving it a full
+   * weight on each side, so the deposit lands in the ratio the bin is already
+   * in — one bin's worth of liquidity, and no composition fee for a mix the
+   * deposit never asked to change. An active bin outside the drawn window, or
+   * one the program has never priced, reads as empty and splits evenly, which
+   * is what an empty bin would want anyway.
+   */
+  const activeXShare = useMemo(
+    () => compositionXShare(bundle.cells.find((cell) => cell.binId === activeId)),
+    [bundle.cells, activeId]
+  );
+
+  /**
+   * The positions the planner may deposit into, the aimed-at one first.
+   *
+   * Order is load-bearing only in one case. The match is by band: an exact one
+   * wins outright, but a *stretch* can sit inside more than one position when
+   * two of them overlap, and `planDeposit` takes the first that contains it.
+   * `Manage → Add` is aimed at a position and says which, so it goes to the
+   * front and the ambiguity never arises. `New position` passes none and the
+   * order stays whatever `getProgramAccounts` returned.
+   */
+  const existingPositions = useMemo(() => {
+    const all = bundle.positions.map((p) => ({
+      address: p.address,
+      lowerBinId: p.view.lowerBinId,
+      upperBinId: p.view.upperBinId,
+      capacity: p.view.capacity
+    }));
+    if (!into) return all;
+    const aimed = into.toBase58();
+    // Stable, so the rest keep their order: `Array#sort` has been required to
+    // be since ES2019 and this only ever lifts one entry.
+    return all.sort(
+      (a, b) => Number(b.address.toBase58() === aimed) - Number(a.address.toBase58() === aimed)
+    );
+  }, [bundle.positions, into]);
 
   const baseAccounts = useMemo(
     (): BaseAccounts | undefined =>
@@ -159,9 +275,9 @@ export function DepositForm({
   );
 
   const plan = useMemo(() => {
-    if (!range || !owner) return undefined;
+    if (!band || !owner) return undefined;
     if (width < 1) return { error: "The upper bin must not be below the lower one." };
-    if (range.lower < bundle.config.minBinId || range.upper > bundle.config.maxBinId) {
+    if (band.lower < bundle.config.minBinId || band.upper > bundle.config.maxBinId) {
       return { error: "That range reaches outside the preset's usable band." };
     }
 
@@ -177,40 +293,32 @@ export function DepositForm({
     if (!baseAccounts) return undefined;
     const deposit = planDeposit({
       accounts: baseAccounts,
-      lower: range.lower,
-      upper: range.upper,
+      lower: band.lower,
+      upper: band.upper,
       activeId,
       amountX: rawX,
       amountY: rawY,
       shape,
       spotBlendBps: spotBlend,
+      activeXShare,
       existingArrays: bundle.cells.filter((c) => c.arrayExists).map((c) => c.arrayIndex),
       // Bands rather than addresses: a position is a keypair account, so the
-      // planner matches an existing one to a spec by the band it spans. The
-      // capacity rides along so the plan does not schedule `resize_position`
-      // calls that would be no-ops.
-      existingPositions: bundle.positions.map((p) => ({
-        address: p.address,
-        lowerBinId: p.view.lowerBinId,
-        upperBinId: p.view.upperBinId,
-        capacity: p.view.capacity
-      })),
+      // planner matches an existing one to a spec by the band it spans, or by
+      // containing it — which is what lets `range` be a stretch of a band the
+      // owner already holds instead of a band to open. The capacity rides
+      // along so the plan does not schedule `resize_position` no-ops.
+      existingPositions,
       headroom
     });
 
-    // Which sides the *range* needs, not which the plan funded: a range
-    // reaching above the active bin needs X even when the user has typed no X
-    // yet, and that is exactly the moment to say so.
     return {
       deposit,
       rawX,
       rawY,
-      needsX: range.upper >= activeId,
-      needsY: range.lower <= activeId,
       funded: deposit.positions.reduce((a, p) => a + p.dist.length, 0)
     };
   }, [
-    range,
+    band,
     owner,
     width,
     bundle,
@@ -220,6 +328,8 @@ export function DepositForm({
     amountY,
     shape,
     spotBlend,
+    activeXShare,
+    existingPositions,
     headroom
   ]);
 
@@ -243,12 +353,22 @@ export function DepositForm({
     : undefined;
   const overspending = balances && ok && (ok.rawX > balances.x || ok.rawY > balances.y);
 
+  /**
+   * An amount offered to a range that has nowhere to put it.
+   *
+   * The one hard rule the composition guard imposes: X may only land at or
+   * above the active bin and Y only at or below it, so a band wholly on one
+   * side of the price can take exactly one of the two tokens. Sending the
+   * other would fail as `DepositXBelowActiveBin` / `DepositYAboveActiveBin`,
+   * and dropping it silently would be worse than refusing it.
+   */
+  const wrongSide = Boolean(ok && ((ok.rawX > 0n && !takesX) || (ok.rawY > 0n && !takesY)));
+
   const blocked =
     !owner ||
     !ok ||
     (ok.rawX === 0n && ok.rawY === 0n) ||
-    (ok.needsX && ok.rawX === 0n) ||
-    (ok.needsY && ok.rawY === 0n) ||
+    wrongSide ||
     !ok.deposit.steps.length ||
     Boolean(overspending) ||
     bundle.pool.status !== 0;
@@ -262,12 +382,12 @@ export function DepositForm({
    * transactions spans enough time for every one of them to have changed.
    */
   const context = useCallback(() => {
-    if (!owner || !range) throw new Error("nothing planned");
+    if (!owner || !band) throw new Error("nothing planned");
     return {
       refresh: async () => {
         const [pool, arrays] = await Promise.all([
           loadPool(connection, bundle.address),
-          missingArrays(connection, bundle.address, range.lower, range.upper)
+          missingArrays(connection, bundle.address, band.lower, band.upper)
         ]);
         const missing = new Set(arrays.missing);
         return {
@@ -300,10 +420,10 @@ export function DepositForm({
         ]);
       }
     };
-  }, [bundle.address, connection, entries, owner, range, tokens]);
+  }, [bundle.address, connection, entries, owner, band, tokens]);
 
   async function deposit() {
-    if (!ok || !range) return;
+    if (!ok || !band) return;
     const result = await batch.run(ok.deposit.steps, context());
 
     if (result.failed) {
@@ -317,7 +437,7 @@ export function DepositForm({
         kind: "ok",
         label: ok.deposit.newPositions ? "Position opened" : "Liquidity added",
         detail:
-          `bins ${range.lower}–${range.upper}, ${ok.funded} funded across ` +
+          `bins ${band.lower}–${band.upper}, ${ok.funded} funded across ` +
           `${ok.deposit.positions.length} position${ok.deposit.positions.length === 1 ? "" : "s"}`
       });
       setAmountX("");
@@ -352,7 +472,7 @@ export function DepositForm({
 
   return (
     <>
-      {range && editableRange && (
+      {band && editableRange && (
         <div className="range-row">
           <label className="field">
             <span>
@@ -365,9 +485,9 @@ export function DepositForm({
             <input
               className="mono"
               type="number"
-              value={range.lower}
+              value={band.lower}
               disabled={locked}
-              onChange={(e) => onRange({ lower: Number(e.target.value), upper: range.upper })}
+              onChange={(e) => onRange({ lower: Number(e.target.value), upper: band.upper })}
             />
           </label>
           <label className="field">
@@ -375,32 +495,32 @@ export function DepositForm({
             <input
               className="mono"
               type="number"
-              value={range.upper}
+              value={band.upper}
               disabled={locked}
-              onChange={(e) => onRange({ lower: range.lower, upper: Number(e.target.value) })}
+              onChange={(e) => onRange({ lower: band.lower, upper: Number(e.target.value) })}
             />
           </label>
           <div className="field">
             <span>price range</span>
             <strong className="mono">
-              {fmtPrice(bundle.ladder.price(range.lower) * bundle.scale)} –{" "}
-              {fmtPrice(bundle.ladder.price(range.upper) * bundle.scale)}
+              {fmtPrice(bundle.ladder.price(band.lower) * bundle.scale)} –{" "}
+              {fmtPrice(bundle.ladder.price(band.upper) * bundle.scale)}
             </strong>
           </div>
         </div>
       )}
 
-      {range && !editableRange && (
+      {band && !editableRange && (
         <div className="readout">
           <dt>band</dt>
           <dd className="mono">
-            {range.lower} – {range.upper}
+            {band.lower} – {band.upper}
             <span className="dim"> · {width} bins</span>
           </dd>
           <dt>price range</dt>
           <dd className="mono">
-            {fmtPrice(bundle.ladder.price(range.lower) * bundle.scale)} –{" "}
-            {fmtPrice(bundle.ladder.price(range.upper) * bundle.scale)}
+            {fmtPrice(bundle.ladder.price(band.lower) * bundle.scale)} –{" "}
+            {fmtPrice(bundle.ladder.price(band.upper) * bundle.scale)}
           </dd>
         </div>
       )}
@@ -438,11 +558,17 @@ export function DepositForm({
         </label>
       )}
 
+      {/*
+        Both fields stay, and the one the range cannot hold says so rather than
+        vanishing: a field that disappears when the band is dragged past the
+        price reads as a bug, and the note explains the refusal below.
+      */}
       <div className="range-row">
-        <label className="field" htmlFor="deposit-x">
+        <label className={`field ${band && !takesX ? "unusable" : ""}`} htmlFor="deposit-x">
           <span>
             {bundle.x.symbol}
-            {balances && (
+            {band && !takesX && <em>not in this range</em>}
+            {balances && takesX && (
               <button
                 type="button"
                 className="link"
@@ -456,16 +582,17 @@ export function DepositForm({
             id="deposit-x"
             className="mono"
             inputMode="decimal"
-            placeholder="0.0"
+            placeholder={band && !takesX ? "—" : "0.0"}
             value={amountX}
-            disabled={locked}
+            disabled={locked || Boolean(band && !takesX)}
             onChange={(e) => setAmountX(e.target.value.replace(/[^\d.]/g, ""))}
           />
         </label>
-        <label className="field" htmlFor="deposit-y">
+        <label className={`field ${band && !takesY ? "unusable" : ""}`} htmlFor="deposit-y">
           <span>
             {bundle.y.symbol}
-            {balances && (
+            {band && !takesY && <em>not in this range</em>}
+            {balances && takesY && (
               <button
                 type="button"
                 className="link"
@@ -479,9 +606,9 @@ export function DepositForm({
             id="deposit-y"
             className="mono"
             inputMode="decimal"
-            placeholder="0.0"
+            placeholder={band && !takesY ? "—" : "0.0"}
             value={amountY}
-            disabled={locked}
+            disabled={locked || Boolean(band && !takesY)}
             onChange={(e) => setAmountY(e.target.value.replace(/[^\d.]/g, ""))}
           />
         </label>
@@ -554,25 +681,63 @@ export function DepositForm({
             )}
           </div>
 
-          {ok.needsX && ok.rawX === 0n && (
-            <p className="hint warn">
-              This range reaches above the active bin, so it needs {bundle.x.symbol} — bins above the
-              active one can only hold X.
+          {/*
+            Two different things, deliberately styled differently. A token the
+            range cannot hold is a refusal — stated as a fact about the range,
+            because by here its field is already empty and disabled. A side
+            left unfunded is a choice, and a common one: you fund the side the
+            price has to cross to reach you, and the other side's bins wait
+            empty.
+          */}
+          {/*
+            The range sits inside a position the wallet already holds, so the
+            planner fills that one rather than opening a second over the same
+            bins — two positions in one stretch pay two rents and split the
+            band's fees across two accounts. The button already says "Add
+            liquidity"; this says which position it means.
+          */}
+          {editableRange && ok.deposit.newPositions === 0 && ok.deposit.positions.length > 0 && (
+            <p className="hint">
+              This range is inside a position you already hold, so it is added to that one rather
+              than opening a second position over the same bins.
             </p>
           )}
-          {ok.needsY && ok.rawY === 0n && (
+          {!takesY && (
             <p className="hint warn">
-              This range reaches below the active bin, so it needs {bundle.y.symbol} — bins below the
-              active one can only hold Y.
+              Every bin in this range is above the active bin, so it can hold only{" "}
+              {bundle.x.symbol}. Drag the range down over the price to deposit {bundle.y.symbol}.
+            </p>
+          )}
+          {!takesX && (
+            <p className="hint warn">
+              Every bin in this range is below the active bin, so it can hold only{" "}
+              {bundle.y.symbol}. Drag the range up over the price to deposit {bundle.x.symbol}.
+            </p>
+          )}
+          {takesX && takesY && ok.rawX === 0n && ok.rawY > 0n && (
+            <p className="hint">
+              One-sided: only the bins at and below the active bin are funded. The{" "}
+              {bundle.x.symbol} side of the range opens empty and can be filled later, or when the
+              price rises through it.
+            </p>
+          )}
+          {takesX && takesY && ok.rawY === 0n && ok.rawX > 0n && (
+            <p className="hint">
+              One-sided: only the bins at and above the active bin are funded. The{" "}
+              {bundle.y.symbol} side of the range opens empty and can be filled later, or when the
+              price falls through it.
             </p>
           )}
           {overspending && <p className="hint warn">That is more than you hold.</p>}
-          {range && range.lower <= activeId && range.upper >= activeId && (
+          {band && band.lower <= activeId && band.upper >= activeId && (
             <p className="hint">
-              Spans the active bin.
+              Spans the active bin — {Math.round(activeXShare * 100)}% {bundle.x.symbol} by value.
               <Info>
-                A deposit that shifts the active bin's X/Y mix pays a composition fee, at that bin's
-                own swap rate.
+                The active bin is the only one that holds both tokens, so it is the only one where a
+                deposit can shift the mix — and shifting it pays a composition fee at that bin's own
+                swap rate, because it is the work of a swap. Its share of this deposit is split in
+                the ratio shown, so it takes one bin's worth of liquidity in the mix it is already
+                in. What is left of the fee is whatever your two amounts are out of balance by.
               </Info>
             </p>
           )}

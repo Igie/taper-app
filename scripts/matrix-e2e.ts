@@ -419,11 +419,14 @@ async function lifecycle(label: string, x: Side, y: Side, index: number) {
   stage("open a band wider than one transaction");
   const opening = plan({});
   check(
-    "one position, opened then grown then filled",
+    "one position, opened at its whole band and filled in chunks",
     opening.positions.length === 1 &&
       opening.steps.length > 1 &&
       opening.steps[0].kind === "openPosition" &&
-      opening.steps.some((s) => s.kind === "resizePosition") &&
+      // The account is allocated by the client, so the band is whole from the
+      // first byte: no `resize_position` anywhere on the opening path.
+      !opening.steps.some((s) => s.kind === "resizePosition") &&
+      opening.positions[0].capacity === opening.positions[0].spec.width &&
       opening.steps.filter((s) => s.kind === "addLiquidity").length > 0,
     opening.steps.map((s) => s.kind).join(" → ")
   );

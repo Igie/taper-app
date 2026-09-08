@@ -38,7 +38,7 @@ import {
 } from "@solana/spl-token";
 import {
   INLINE_BINS_PER_POSITION,
-  MAX_BINS_PER_EXTEND,
+  positionLenFor,
   MAX_BINS_PER_POSITION,
   MAX_TX_BYTES,
   TX_HEADROOM,
@@ -282,17 +282,17 @@ const plan = planDeposit({
 });
 const kinds = plan.steps.map((st) => st.kind);
 check(
-  "open, then grow, then fill",
+  "open at the whole band, then fill — no growth on the way",
   plan.positions.length === 1 &&
     kinds[0] === "openPosition" &&
-    kinds.filter((k) => k === "resizePosition").length ===
-      Math.ceil((BAND - INLINE_BINS_PER_POSITION) / MAX_BINS_PER_EXTEND) &&
-    kinds.lastIndexOf("resizePosition") < kinds.indexOf("addLiquidity"),
+    !kinds.includes("resizePosition") &&
+    kinds.slice(1).every((k) => k === "addLiquidity"),
   kinds.join(" → ")
 );
 check(
-  "every growth step is a target, and safe to retry",
-  plan.steps.every((st) => st.kind !== "resizePosition" || (st.idempotent === true && Boolean(st.grows)))
+  "the account is allocated for the whole band up front",
+  plan.positions[0].capacity === BAND && plan.newPositionBytes === positionLenFor(BAND),
+  `${plan.positions[0].capacity} bins, ${plan.newPositionBytes} bytes`
 );
 check(
   "the split spends the whole deposit",
@@ -343,8 +343,12 @@ check("every funded bin matches the preview to the raw unit", worstX === 0n && w
 
 // The shape must not step at a chunk boundary — the seam is where a wrong
 // renormalisation shows, because each chunk spends a full 10_000 bps of its own.
+// The active bin sits out the walk: it is the only bin holding both tokens,
+// and the shape splits its weight between two legs that are normalised against
+// two different sides, so the raw sum of its amounts is not comparable with a
+// one-sided neighbour's. The SDK's own tests pin what that bin gets.
 let steps = 0;
-for (let id = LOWER + 1; id <= 0; id += 1) {
+for (let id = LOWER + 1; id <= -1; id += 1) {
   const here = onChain.get(id)!;
   const below = onChain.get(id - 1)!;
   if (here.amountX + here.amountY < below.amountX + below.amountY) steps += 1;
@@ -382,14 +386,177 @@ check("and the fills are the ones with no witness", witnessed.length < plan.step
 
 // --------------------------------------------------------------------------
 
-step("rebalance into a higher band");
+step("read back what the deposit left on chain");
 const held: { address: PublicKey; view: PositionView }[] = [];
 for (const p of plan.positions) {
   held.push({ address: p.address, view: parsePosition((await connection.getAccountInfo(p.address))!.data) });
 }
 
+// Taken before the ranged withdrawal below, so the two withdrawals together
+// are measured against what went in.
 const beforeX = await tokenAmount(userX);
 const beforeY = await tokenAmount(userY);
+
+// --------------------------------------------------------------------------
+
+step("a ranged withdrawal takes one edge and leaves the rest in the pool");
+// `remove_liquidity` has always taken a bin-by-bin list, so narrowing a
+// withdrawal is a matter of which bins that list is built from. What is being
+// checked is that it really is a stretch: the bins outside it keep their
+// shares, the position stays open, and nothing is closed.
+const edgeOf = held[0];
+const edgeWidth = Math.min(edgeOf.view.width, edgeOf.view.capacity);
+const edge = {
+  lower: edgeOf.view.lowerBinId,
+  upper: edgeOf.view.lowerBinId + Math.min(9, edgeWidth - 1)
+};
+const inEdge = edgeOf.view.shares.filter(
+  (share, i) => share > 0n && edgeOf.view.lowerBinId + i <= edge.upper
+).length;
+
+const ranged = planExit({ accounts, positions: held, bps: 10_000, range: edge, headroom: TX_HEADROOM });
+check(
+  "a range never closes, whatever the percentage",
+  ranged.closing === 0 && ranged.steps.every((st) => st.destroys === undefined)
+);
+check(
+  `${inEdge} bins burned, and only in the first position`,
+  ranged.bins === inEdge && ranged.steps.length === 1,
+  `${ranged.bins} bins over ${ranged.steps.length} steps`
+);
+await runSteps(ranged.steps, pool, "ranged");
+
+const shed = parsePosition((await connection.getAccountInfo(edgeOf.address))!.data);
+check("the position is still open", await exists(edgeOf.address));
+check(
+  "the edge is empty and the rest of the band is not",
+  shed.shares.every((share, i) => (shed.lowerBinId + i <= edge.upper ? share === 0n : true)) &&
+    shed.shares.some((share, i) => shed.lowerBinId + i > edge.upper && share > 0n)
+);
+check(
+  "and the reserves kept what the other bins hold",
+  (await tokenAmount(reserveX)) > 0n && (await tokenAmount(reserveY)) > 0n
+);
+
+// Re-aimed at bins it has just emptied, the same plan is nothing at all — not
+// even a claim. A claim rides along with a withdrawal because a withdrawal
+// checkpoints a fee on its way out; with no shares to burn there is nothing to
+// ride on, and sweeping the whole position's fees is not what a range asked
+// for.
+const emptied = planExit({
+  accounts,
+  positions: [{ address: edgeOf.address, view: shed }],
+  bps: 10_000,
+  range: edge,
+  headroom: TX_HEADROOM
+});
+check("re-aiming at emptied bins plans nothing", emptied.steps.length === 0 && emptied.bins === 0);
+
+// --------------------------------------------------------------------------
+
+step("a ranged deposit refills that edge, and only that edge");
+/*
+ * The mirror of the withdrawal above, and the reason both are here: a range is
+ * *which bins receive liquidity*, not a band to open. Refilling ten bins of a
+ * 160-bin position is one `add_liquidity` over those ten — the planner matches
+ * the stretch to the position that contains it, the band does not move, and no
+ * second position is opened over bins the first one already spans.
+ *
+ * Y only. Every bin in this edge sits below the active one, so it can hold
+ * nothing else; the planner would allocate an X amount to no bin at all, which
+ * is why `DepositForm` refuses that token at its own field rather than sending
+ * a deposit that quietly drops it.
+ */
+const REFILL = AMOUNT / 100n;
+const edgeBand = { lowerBinId: shed.lowerBinId, upperBinId: shed.upperBinId, capacity: shed.capacity };
+const refill = planDeposit({
+  accounts,
+  lower: edge.lower,
+  upper: edge.upper,
+  activeId: 0,
+  amountX: 0n,
+  amountY: REFILL,
+  shape: "spot",
+  existingPositions: [{ address: edgeOf.address, ...edgeBand }],
+  // Every array this band spans is already on chain — the first deposit paid
+  // for them. A stretch quotes rent for the bins it names and no others, so
+  // with the arrays declared there is nothing left to rent.
+  existingArrays: cells.map((c) => c.arrayIndex),
+  headroom: TX_HEADROOM
+});
+check(
+  "a stretch of a held band opens no second position",
+  refill.newPositions === 0 &&
+    refill.positions.length === 1 &&
+    refill.positions[0].address.equals(edgeOf.address),
+  `${refill.newPositions} opened, ${refill.positions.length} targeted`
+);
+check(
+  "and resizes nothing — the band it names is the band it has",
+  refill.steps.every((st) => st.kind === "addLiquidity") &&
+    refill.positions[0].band.lower === shed.lowerBinId &&
+    refill.positions[0].band.upper === shed.upperBinId,
+  refill.steps.map((st) => st.kind).join(" → ")
+);
+check(
+  "the whole amount goes into the stretch, not a share of it",
+  refill.allocatedY === REFILL && refill.allocatedX === 0n,
+  `${refill.allocatedY} of ${REFILL}`
+);
+check(
+  "and it rents no arrays, because these bins are already on chain",
+  refill.missingArrays.length === 0,
+  refill.missingArrays.join(", ")
+);
+// What the client has to refuse for itself: a stretch below the price has no
+// bin that may hold X, so the shape weights nothing and the amount would be
+// dropped rather than deposited. `takesX` in `DepositForm` is that check.
+const wrongSide = planDeposit({
+  accounts,
+  lower: edge.lower,
+  upper: edge.upper,
+  activeId: 0,
+  amountX: REFILL,
+  amountY: 0n,
+  shape: "spot",
+  existingPositions: [{ address: edgeOf.address, ...edgeBand }],
+  headroom: TX_HEADROOM
+});
+check(
+  "X offered to a stretch below the price allocates nowhere",
+  wrongSide.allocatedX === 0n && wrongSide.steps.length === 0
+);
+
+await runSteps(refill.steps, pool, "refill");
+
+const refilled = parsePosition((await connection.getAccountInfo(edgeOf.address))!.data);
+check(
+  "the band is exactly where it was",
+  refilled.lowerBinId === shed.lowerBinId &&
+    refilled.upperBinId === shed.upperBinId &&
+    refilled.capacity === shed.capacity,
+  `${refilled.lowerBinId}…${refilled.upperBinId}`
+);
+check(
+  "the edge holds shares again",
+  refilled.shares.some((share, i) => refilled.lowerBinId + i <= edge.upper && share > 0n)
+);
+check(
+  "and no bin outside it moved",
+  refilled.shares.every(
+    (share, i) => refilled.lowerBinId + i <= edge.upper || share === shed.shares[i]
+  )
+);
+
+// --------------------------------------------------------------------------
+
+step("rebalance the rest into a higher band");
+// The views the exit below burns from have to be the ones on chain, not the
+// ones the ranged withdrawal invalidated.
+held.length = 0;
+for (const p of plan.positions) {
+  held.push({ address: p.address, view: parsePosition((await connection.getAccountInfo(p.address))!.data) });
+}
 
 const exit = planExit({ accounts, positions: held, bps: 10_000, close: true, headroom: TX_HEADROOM });
 check(

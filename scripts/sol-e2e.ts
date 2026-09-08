@@ -49,7 +49,7 @@ import {
   initializeBinArrayIx,
   initializeConfigIx,
   initializePoolIx,
-  initializePositionIx,
+  openPositionIxs,
   orderMints,
   parsePool,
   parsePosition,
@@ -252,7 +252,7 @@ const lamportsBeforeDeposit = await lamportsOf(wallet.publicKey);
 await send([
   ...wrap.before,
   ...arrays.map((index) => initializeBinArrayIx(wallet.publicKey, pool, config, index)),
-  initializePositionIx(wallet.publicKey, pool, config, position, lower, width),
+  ...openPositionIxs(wallet.publicKey, pool, config, position, lower, width),
   addLiquidityIx(
     {
       owner: wallet.publicKey,

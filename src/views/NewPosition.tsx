@@ -8,6 +8,7 @@
  *
  * The form itself is shared with `Manage → Add`; see `DepositForm`.
  */
+import type { ReactNode } from "react";
 import type { TokenPair } from "@taper/sdk";
 import type { PoolBundle } from "./PoolView";
 import type { Toast } from "../lib/providers";
@@ -19,6 +20,8 @@ export function NewPosition({
   tokens,
   range,
   onRange,
+  header,
+  onBusyChange,
   onDone,
   push
 }: {
@@ -26,12 +29,17 @@ export function NewPosition({
   tokens: TokenPair;
   range?: Range;
   onRange: (range: Range) => void;
+  /** The pool page's view picker, which stands in for this panel's title. */
+  header?: ReactNode;
+  /** Raised while a plan is in flight or half-landed; see `DepositForm`. */
+  onBusyChange?: (busy: boolean) => void;
   onDone: () => void;
   push: (toast: Omit<Toast, "id">) => void;
 }) {
   return (
     <Panel
       title="New position"
+      header={header}
       aside={
         <span className="hint">
           drag the ladder to pick a band
@@ -49,6 +57,7 @@ export function NewPosition({
         range={range}
         onRange={onRange}
         editableRange
+        onBusyChange={onBusyChange}
         onDone={onDone}
         push={push}
       />

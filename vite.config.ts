@@ -27,8 +27,28 @@ const PROXIED = [
   { env: "VITE_MAINNET_RPC", path: "/rpc/mainnet" }
 ] as const;
 
+/**
+ * Each public network has two endpoint slots, and which one is read is decided
+ * here rather than by the app.
+ *
+ * `VITE_<NET>_RPC` is what a **build** ships with: it is inlined into the JS
+ * every visitor downloads, so it is the endpoint that has to survive being
+ * public — rate-limited per IP at worst, revocable at least. That is the name
+ * to set in the Vercel project.
+ *
+ * `VITE_<NET>_RPC_DEV` is what **this machine** uses, and it wins whenever the
+ * dev server is running. It is proxied rather than inlined, so a personal key
+ * pasted there is used by the page without ever being served to it — and a
+ * production build ignores the slot entirely. That is the whole reason the two
+ * are separate names instead of one: the endpoint you are happy to hand to
+ * every visitor and the one you pay for by the request are rarely the same
+ * URL, and pasting the second into the first is a mistake with no symptom.
+ */
+const devSlot = (name: string) => `${name}_DEV`;
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
+  const dev = mode !== "production";
 
   const proxy: Record<string, ProxyOptions> = {};
   const define: Record<string, unknown> = {
@@ -37,9 +57,12 @@ export default defineConfig(({ mode }) => {
   };
 
   for (const { env: name, path } of PROXIED) {
-    const upstream = (env[name] ?? "").trim();
+    const shipped = (env[name] ?? "").trim();
+    const local = (env[devSlot(name)] ?? "").trim();
+    const upstream = (dev && local) || shipped;
+
     let value = upstream;
-    if (mode !== "production" && /^https?:\/\//i.test(upstream)) {
+    if (dev && /^https?:\/\//i.test(upstream)) {
       const url = new URL(upstream);
       proxy[path] = {
         target: url.origin,
@@ -53,6 +76,11 @@ export default defineConfig(({ mode }) => {
     // Overrides what `loadEnv` would otherwise have inlined, so the app sees
     // the proxy path in dev and the real endpoint in a build.
     define[`import.meta.env.${name}`] = JSON.stringify(value);
+    // The dev slot is never a value the page may read. Nothing in `src/` asks
+    // for it, and defining it empty keeps it that way if something ever does:
+    // a machine-local endpoint reaching a bundle is exactly what the two names
+    // exist to prevent.
+    define[`import.meta.env.${devSlot(name)}`] = '""';
   }
 
   return {

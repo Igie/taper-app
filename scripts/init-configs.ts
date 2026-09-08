@@ -10,7 +10,8 @@
  *   bun run --cwd app configs:init -- --network mainnet-beta --yes
  *   bun run --cwd app configs:init -- --url https://my-endpoint
  *
- * `--network` picks the endpoint from the SDK's own table so this script and
+ * `--network` picks the endpoint from `app/.env` — `VITE_DEVNET_RPC_DEV`, then
+ * `VITE_DEVNET_RPC` — falling back to the SDK's own table, so this script and
  * the app cannot disagree about where devnet is; `--url` overrides it. On a
  * live network the run stops unless `--yes` is passed, because the authority
  * this creates is not something to discover you set by accident: it collects
@@ -46,7 +47,24 @@ if (!network) {
   console.error(`Unknown --network. Use mainnet-beta, devnet or localnet.`);
   process.exit(1);
 }
-const url = arg("url", network.defaultEndpoint);
+/**
+ * Where this network lives, from the same slots the app reads.
+ *
+ * Bun loads `app/.env` from the working directory, which `bun run --cwd app`
+ * makes this one, so a paid endpoint pasted there is used here too and neither
+ * this script nor the app can be pointed at a cluster the other is not. The
+ * order is the dev server's: the machine's own endpoint first, then the one a
+ * build would ship with, then the SDK's public default — which throttles
+ * `getProgramAccounts` and is the last resort rather than the norm.
+ */
+function envEndpoint(id: string) {
+  const slot = id === "mainnet-beta" ? "MAINNET" : id.toUpperCase();
+  const local = (process.env[`VITE_${slot}_RPC_DEV`] ?? "").trim();
+  const shipped = (process.env[`VITE_${slot}_RPC`] ?? "").trim();
+  return local || shipped;
+}
+
+const url = arg("url", envEndpoint(network.id) || network.defaultEndpoint);
 const keypairPath = arg("keypair", join(homedir(), ".config", "solana", "id.json"));
 const dryRun = process.argv.includes("--dry-run");
 

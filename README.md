@@ -24,17 +24,36 @@ start it with `.\scripts\start-localnet.ps1` first.
 
 ### Configuration
 
-`.env`, all optional:
+`.env`, all optional — copy `.env.example`, which is the same list with the
+reasoning attached:
 
 ```
 VITE_TAPER_ADMIN=<the authority that published this deployment's presets>
-VITE_DEVNET_RPC=<an RPC that allows getProgramAccounts>
+
+# what a build ships with — public to every visitor
+VITE_MAINNET_RPC=
+VITE_DEVNET_RPC=
+
+# what this machine uses — proxied by the dev server, never bundled
+VITE_MAINNET_RPC_DEV=
+VITE_DEVNET_RPC_DEV=
+
 VITE_LOCALNET_RPC=http://127.0.0.1:8899
 ```
 
 `VITE_TAPER_ADMIN` is what lets the app label presets as its own rather than as
 third-party, and what reveals the publishing panel to that wallet. Unset, the
 app still works — it simply calls every preset third-party, which is honest.
+
+**Each public network has two endpoint slots, and the difference is who gets to
+see the URL.** `VITE_<NET>_RPC` is inlined into the bundle every visitor
+downloads, so it is the endpoint that has to survive being public — that is the
+name to set in the Vercel project, below. `VITE_<NET>_RPC_DEV` wins whenever
+the dev server is running and is ignored by a production build: it is proxied
+rather than inlined, so a personal key pasted there is used by the page without
+ever being served to it. They are two names instead of one because pasting the
+metered endpoint into the public slot is a mistake with no symptom until the
+quota is gone.
 
 ### Where the rest of it lives
 
@@ -52,7 +71,7 @@ Vercel builds it from this repository with no configuration beyond
 [`vercel.json`](vercel.json) — `bun install`, `bun run build`, serve `dist`.
 There is no router, so there is no rewrite to add.
 
-The three `VITE_*` variables are **build-time** and land in the JS bundle every
+The `VITE_*` variables are **build-time** and land in the JS bundle every
 visitor downloads. Set them in the Vercel project, not in a committed `.env`,
 and put only endpoints you are willing to publish there. Anyone who needs more
 throughput than a public endpoint gives points their own browser at their own
@@ -64,6 +83,10 @@ VITE_TAPER_ADMIN=<the authority that published this deployment's presets>
 VITE_DEVNET_RPC=https://api.devnet.solana.com
 VITE_MAINNET_RPC=https://api.mainnet-beta.solana.com
 ```
+
+The `_DEV` slots have no meaning here and setting them does nothing: a Vercel
+build runs in production mode, where they are not read. They are for a checkout
+on a laptop, where the dev server proxies them.
 
 ## Deploying the program to a fresh cluster
 
@@ -137,12 +160,12 @@ triggers a CORS preflight, and an endpoint can answer the POST with a correct
 `access-control-allow-origin` while answering the `OPTIONS` before it with a
 JSON-RPC error and no CORS headers — Orbitflare's devnet endpoint does exactly
 that, so the browser blocks the request and the whole app reads as offline.
-`vite.config.ts` therefore forwards `/rpc/devnet` to whatever `VITE_DEVNET_RPC`
-names, and the page makes a same-origin request; the key stays on the machine
-running the dev server instead of going into the bundle. A production build has
-no dev server behind it, so a *deployed* app still needs an endpoint that
-answers preflight — that is the check to run before putting one in `.env` for a
-build.
+`vite.config.ts` therefore forwards `/rpc/devnet` to whatever
+`VITE_DEVNET_RPC_DEV` names — or `VITE_DEVNET_RPC`, if the dev slot is blank —
+and the page makes a same-origin request; the key stays on the machine running
+the dev server instead of going into the bundle. A production build has no dev
+server behind it, so a *deployed* app still needs an endpoint that answers
+preflight — that is the check to run before putting one in the shipped slot.
 
 A failed read says which of the two things went wrong, because they look
 identical on screen and have opposite fixes: `isEndpointFailure` in

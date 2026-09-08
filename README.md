@@ -3,17 +3,19 @@
 The public-facing app: browse pools, create one from two mints, provide
 liquidity, and swap. It talks to a real cluster through a real wallet.
 
-This is not [`../ui`](../ui). That one is a localnet instrument — a burner
+This is not the localnet console it grew up beside. That one is a localnet
+instrument — a burner
 keypair, self-minted test tokens, a steerable clock, and every admin lever
 exposed. This one assumes you are a user, not the person debugging the
-program. Both import the ABI from [`taper-amm-sdk`](../sdk), so neither can drift
+program. Both import the ABI from
+[`taper-amm-sdk`](https://www.npmjs.com/package/taper-amm-sdk), so neither can drift
 from the other.
 
 ## Running it
 
 ```powershell
-bun install          # from the repo root: this is a workspace
-bun run --cwd app dev
+bun install
+bun run dev
 ```
 
 Defaults to devnet. The network selector also offers localnet, which is the
@@ -22,7 +24,7 @@ start it with `.\scripts\start-localnet.ps1` first.
 
 ### Configuration
 
-`app/.env`, all optional:
+`.env`, all optional:
 
 ```
 VITE_TAPER_ADMIN=<the authority that published this deployment's presets>
@@ -34,7 +36,38 @@ VITE_LOCALNET_RPC=http://127.0.0.1:8899
 third-party, and what reveals the publishing panel to that wallet. Unset, the
 app still works — it simply calls every preset third-party, which is honest.
 
-## Deploying to a fresh cluster
+### Where the rest of it lives
+
+This repository is the interface and nothing else. The ABI arrives from npm
+as [`taper-amm-sdk`](https://www.npmjs.com/package/taper-amm-sdk); its source,
+the `taper-core` math it shares with the on-chain program, and the Jupiter
+`Amm` implementation live in the repository of the same name,
+[Igie/taper-amm-sdk](https://github.com/Igie/taper-amm-sdk). The Anchor
+program, the LiteSVM integration tests and the localnet the `*:e2e` scripts
+below drive are in the main repository, which is not public.
+
+## Deploying this app
+
+Vercel builds it from this repository with no configuration beyond
+[`vercel.json`](vercel.json) — `bun install`, `bun run build`, serve `dist`.
+There is no router, so there is no rewrite to add.
+
+The three `VITE_*` variables are **build-time** and land in the JS bundle every
+visitor downloads. Set them in the Vercel project, not in a committed `.env`,
+and put only endpoints you are willing to publish there. Anyone who needs more
+throughput than a public endpoint gives points their own browser at their own
+RPC from the chip in the header — that is stored in `localStorage`, never
+built in, which is why the shipped default can stay public.
+
+```
+VITE_TAPER_ADMIN=<the authority that published this deployment's presets>
+VITE_DEVNET_RPC=https://api.devnet.solana.com
+VITE_MAINNET_RPC=https://api.mainnet-beta.solana.com
+```
+
+## Deploying the program to a fresh cluster
+
+The program is not in this repository. From the main one:
 
 ```powershell
 .\scripts\deploy.ps1 -Cluster devnet           # the program
@@ -43,7 +76,8 @@ bun run --cwd app configs:init                 # the ladder presets
 
 Mainnet is the same two commands with `-Cluster mainnet-beta` and
 `configs:init -- --network mainnet-beta --yes`; the program has the same
-address on every cluster. `docs/mainnet-checklist.md` is the go-live list.
+address on every cluster. `docs/mainnet-checklist.md` there is the go-live
+list.
 
 The second step is not optional. A pool is opened *against a config*, so until
 one exists the program is deployed but nothing can be created. `configs:init`
@@ -63,8 +97,8 @@ enough for anything interesting.
 reproduces the program's swap walk — the same rounding, the same per-bin fee,
 the same volatility accumulation — because `min_amount_out` is the only thing
 protecting a trader, and a bound computed from a guess either rejects good
-fills or permits bad ones. `ui/scripts/e2e.ts` asserts the quote predicts a
-real swap to the lamport.
+fills or permits bad ones. The main repository's `ui/scripts/e2e.ts` asserts the
+quote predicts a real swap to the lamport.
 
 **SOL is not a token, so the app wraps it.** A pool holds token accounts, so a
 SOL pair is really a wrapped-SOL pair: `So111…112`, an ordinary SPL mint as far
@@ -210,13 +244,13 @@ capability, and `wide:e2e` and `matrix:e2e` still drive it; it is simply not a
 button any more, because a move keeps the account, the checkpoints and the
 claimed totals that a round trip throws away.
 
-    bun run --cwd app wide:e2e
+    bun run wide:e2e
 
 drives all of it against a running localnet: a 160-bin band opened as three
 positions, every funded bin checked against the plan to the raw unit, a re-run
 that correctly sends nothing, and a rebalance into a different band.
 
-    bun run --cwd app matrix:e2e
+    bun run matrix:e2e
 
 runs the same lifecycle — open, add to the *existing* positions, swap, claim
 across them, withdraw half, rebalance, close — over every kind of pair: SPL/SPL,
@@ -232,7 +266,7 @@ costing more than an SPL one would show up.
 
 ```powershell
 .\scripts\start-localnet.ps1
-bun run --cwd app sol:e2e
+bun run sol:e2e
 ```
 
 Creates a SOL pair, deposits into it, swaps, and withdraws, asserting at each
